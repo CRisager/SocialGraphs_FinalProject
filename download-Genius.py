@@ -13,6 +13,9 @@ csv_path = kagglehub.dataset_download(handle, path="song_lyrics.csv")
 
 df = pd.read_csv(csv_path, usecols=columns_to_keep)
 
+# Keep only songs from 1970
+df = df[df["year"] == 1970]
+
 print(df.head())
 
 df.to_csv("./genius_songs_trimmed.csv", index=False)
