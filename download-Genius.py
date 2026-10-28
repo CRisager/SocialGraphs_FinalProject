@@ -6,7 +6,7 @@ import pandas as pd
 handle = "carlosgdcj/genius-song-lyrics-with-language-information"
 
 # Only load specific columns into your DataFrame
-columns_to_keep = ["title", "artist", "year", "tag", "language"]
+columns_to_keep = ["lyrics", "title", "artist", "year", "tag", "language"]
 
 # Downloads only song_lyrics.csv into the kagglehub cache and returns its path
 csv_path = kagglehub.dataset_download(handle, path="song_lyrics.csv")
