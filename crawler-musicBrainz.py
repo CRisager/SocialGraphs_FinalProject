@@ -35,11 +35,12 @@ API = "https://musicbrainz.org/ws/2"
 # MusicBrainz requires a descriptive User-Agent with contact info, or it will block you.
 HEADERS = {"User-Agent": "SongsCounter/1.0 ( your-email@example.com )"}
 RATE_LIMIT_SECONDS = 1.1
-YEAR = "1976"
+YEAR = "1970"
+LANG = "eng"  # ISO 639-3 code of the tracklist language
 CHECKPOINT = f"mb_{YEAR}_checkpoint.json"
 
 # Lucene query for the release search. Drop the NOT clause to include compilations.
-QUERY = f'date:{YEAR} AND lang:eng AND status:official AND type:single AND NOT secondarytype:compilation'
+QUERY = f'date:{YEAR} AND lang:{LANG} AND status:official AND type:single AND NOT secondarytype:compilation'
 
 session = requests.Session()
 session.headers.update(HEADERS)
@@ -114,6 +115,8 @@ def add_releases(state, data):
             "title": rel.get("title"),
             "date": rel.get("date"),
             "track_count": rel.get("track-count", 0),
+            "country": rel.get("country"),
+            "language": (rel.get("text-representation") or {}).get("language"),
         }
 
 
@@ -179,6 +182,17 @@ def phase1_search(state):
 LOOKUP_BATCH = 45
 
 
+def release_origin(rec, releases):
+    """Country and language of the earliest of our releases this recording is on."""
+    ours = [r for r in rec.get("releases", []) if r["id"] in releases]
+    if not ours:
+        return None, LANG
+    rel = min(ours, key=lambda r: (not r.get("country"), r.get("date") or "9999"))
+    # older checkpoints didn't store language; every release matched lang:LANG anyway
+    language = releases[rel["id"]].get("language") or LANG
+    return rel.get("country"), language
+
+
 def phase2_lookup(state):
     """Fetch recordings of the found releases in batches; keep those first released in YEAR."""
     done = set(state["done_releases"])
@@ -202,8 +216,10 @@ def phase2_lookup(state):
                     )
                     artist_ids = [ac["artist"]["id"] for ac in credits if "artist" in ac]
                     tags = [[t["name"], t.get("count", 0)] for t in rec.get("tags", [])]
+                    country, language = release_origin(rec, state["releases"])
                     state["recordings"][rec["id"]] = [rec.get("title"), artist,
-                                                      artist_ids, tags]
+                                                      artist_ids, tags, first[:4],
+                                                      country, language]
             offset += 100
         if count > PAGE_CAP:
             print(f"  WARNING: batch had {count} recordings, only {PAGE_CAP} fetched",
@@ -253,7 +269,7 @@ def song_genres(rec, artists, genre_names):
                 votes[name] = votes.get(name, 0) + count
         return sorted(votes, key=votes.get, reverse=True)
 
-    _, _, artist_ids, tags = rec
+    artist_ids, tags = rec[2], rec[3]
     return pick(tags) or pick([t for aid in artist_ids for t in artists.get(aid, [])])
 
 
@@ -263,9 +279,9 @@ def main():
     args = ap.parse_args()
 
     state = load_state()
-    if any(len(rec) < 4 for rec in state["recordings"].values()):
-        # checkpoint from before genres were collected: redo the lookup phase
-        print("Old checkpoint format, re-running phase 2 to collect artist IDs")
+    if any(len(rec) < 7 for rec in state["recordings"].values()):
+        # checkpoint from before genres/year/country were collected: redo the lookup phase
+        print("Old checkpoint format, re-running phase 2 to collect year/country/language")
         state["recordings"], state["done_releases"] = {}, []
     print("Phase 1: searching releases...")
     phase1_search(state)
@@ -287,12 +303,13 @@ def main():
     genre_names = fetch_genre_names()
 
     with open(f"songs_{YEAR}.csv", "w", encoding="utf-8") as f:
-        f.write("recording_id,title,artist,genre,genres\n")
+        f.write("id,song,artist,genre,year,language,country,genres\n")
         esc = lambda s: '"' + (s or "").replace('"', '""') + '"'
         for rid, rec in state["recordings"].items():
             genres = song_genres(rec, state["artists"], genre_names)
             f.write(f"{rid},{esc(rec[0])},{esc(rec[1])},"
-                    f"{esc(genres[0] if genres else '')},{esc(';'.join(genres))}\n")
+                    f"{esc(genres[0] if genres else '')},{rec[4]},{rec[6] or ''},"
+                    f"{rec[5] or ''},{esc(';'.join(genres))}\n")
     print(f"Wrote songs_{YEAR}.csv")
 
 
