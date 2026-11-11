@@ -13,8 +13,10 @@ csv_path = kagglehub.dataset_download(handle, path="song_lyrics.csv")
 
 df = pd.read_csv(csv_path, usecols=columns_to_keep)
 
-# Keep only songs from 1970
-df = df[df["year"] == 1970]
+# Keep only songs from these years (dataCleaner/clean.py picks its range out of this)
+FIRST_YEAR, LAST_YEAR = 1970, 1980
+df = df[df["year"].between(FIRST_YEAR, LAST_YEAR)]
+print(df["year"].value_counts().sort_index().to_string())
 
 print(df.head())
 

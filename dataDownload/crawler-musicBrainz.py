@@ -1,26 +1,37 @@
 """
-Count English-language songs first released in 1975, using the MusicBrainz API.
+Count English-language songs first released in a given year (or range of years),
+using the MusicBrainz API. Each year is crawled separately, with its own checkpoint
+(mb_<year>_checkpoint.json) and output (songs_<year>.csv).
 
 Definition used (adjust to taste):
-  * "release"  = an official release dated 1975 whose tracklist language is English (lang:eng)
-  * "song"     = a distinct MusicBrainz *recording* whose first-release-date is in 1975
-                 (so reissues of earlier tracks on 1975 compilations are not counted)
+  * "release"  = an official release dated YEAR whose tracklist language is English (lang:eng)
+  * "song"     = a distinct MusicBrainz *recording* whose first-release-date is in YEAR
+                 (so reissues of earlier tracks on YEAR compilations are not counted)
   * all genres  - no genre filter is applied, but each song is labelled with genres:
                  the recording's own genre tags if it has any, otherwise its artists'.
                  Only tags on MusicBrainz's official genre list count (so not "70s").
+  * instruments - each song is also labelled with the instruments credited on the
+                 recording ("artist X played guitar" relationships). Where a recording
+                 has none, those credited to its release as a whole are used. Most
+                 recordings have neither: MusicBrainz only knows what editors entered.
 
-Three phases:
+Four phases:
   1. Search  - pages through /ws/2/release search (100 per request) to list candidate releases.
                This alone gives a quick upper bound (sum of track counts).
   2. Lookup  - fetches the recordings of ~45 releases per request via the recording search
                and dedupes them. MusicBrainz allows ~1 request/second; progress is
                checkpointed, so you can stop (Ctrl+C) and re-run to resume.
   3. Genres  - fetches the tags of ~45 artists per request via the artist search.
+  4. Instruments - one lookup per release (relationships are not in the search index),
+               so this is the slow phase: ~1.1 s per release, about half an hour for
+               1,600 releases. Skip it with --no-instruments.
 
 Usage:
     pip install requests
-    python crawler-musicBrainz.py            # both phases
+    python crawler-musicBrainz.py            # all phases, 1970 only
+    python crawler-musicBrainz.py --years 1970 1980   # every year 1970..1980
     python crawler-musicBrainz.py --quick    # phase 1 only (fast upper bound)
+    python crawler-musicBrainz.py --no-instruments   # phases 1-3 only (minutes, not hours)
 """
 
 import argparse
@@ -33,14 +44,22 @@ import requests
 
 API = "https://musicbrainz.org/ws/2"
 # MusicBrainz requires a descriptive User-Agent with contact info, or it will block you.
-HEADERS = {"User-Agent": "SongsCounter/1.0 ( your-email@example.com )"}
+HEADERS = {"User-Agent": "SongsCounter/1.0 ( 2maasdumai@gmail.com )"}
 RATE_LIMIT_SECONDS = 1.1
-YEAR = "1970"
 LANG = "eng"  # ISO 639-3 code of the tracklist language
-CHECKPOINT = f"mb_{YEAR}_checkpoint.json"
 
-# Lucene query for the release search. Drop the NOT clause to include compilations.
-QUERY = f'date:{YEAR} AND lang:{LANG} AND status:official AND type:single AND NOT secondarytype:compilation'
+
+def set_year(year):
+    """The functions below crawl one year at a time, set here."""
+    global YEAR, CHECKPOINT, QUERY
+    YEAR = str(year)
+    CHECKPOINT = f"mb_{YEAR}_checkpoint.json"
+    # Lucene query for the release search. Drop the NOT clause to include compilations.
+    QUERY = (f'date:{YEAR} AND lang:{LANG} AND status:official AND type:single '
+             f'AND NOT secondarytype:compilation')
+
+
+set_year(1970)
 
 session = requests.Session()
 session.headers.update(HEADERS)
@@ -79,7 +98,8 @@ def load_state():
         with open(CHECKPOINT) as f:
             return json.load(f)
     return {"releases": {}, "search_offset": 0, "search_total": None,
-            "done_releases": [], "recordings": {}, "artists": {}}
+            "done_releases": [], "recordings": {}, "artists": {},
+            "instruments": {}, "done_instrument_releases": []}
 
 
 def save_state(state):
@@ -97,11 +117,18 @@ def save_state(state):
 # Country goes first: it splits far better than the others (e.g. 1975 singles are
 # almost all 2 tracks, and date ranges don't help since year-only dates match all).
 PAGE_CAP = 500
+LETTERS = "abcdefghijklmnopqrstuvwxyz0123456789"
 SPLITTERS = [
     ("country", ["US", "GB", "CA", "AU", "NZ", "IE", "XE", "XW", "DE", "NL",
                  "FR", "JP", "SE", "IT", "ES", "BR", "ZA", "JM", "NO", "DK"]),
     ("primarytype", ["album", "single", "ep", "broadcast", "other"]),
     ("tracks", [str(n) for n in range(1, 41)]),
+    # US and GB 2-track singles alone pass the cap from 1978 on, and most are dated by
+    # year only. So split on the first letter of any word in the artist credit, then in
+    # the title. A release can match several letters; they are keyed by id, so it is
+    # only stored once.
+    ("artist", [c + "*" for c in LETTERS]),
+    ("release", [c + "*" for c in LETTERS]),
 ]
 
 
@@ -171,7 +198,10 @@ def crawl_group(q, field, values, state, depth):
 
 def phase1_search(state):
     """Collect all releases matching QUERY, splitting around the paging cap."""
-    state.setdefault("done_queries", [])
+    if state.get("splitters") != len(SPLITTERS):
+        # new year, or one searched with fewer splitters (slices may have been cut at
+        # the paging cap): search again, releases already found are kept
+        state["done_queries"], state["splitters"] = [], len(SPLITTERS)
     crawl(QUERY, state)
 
 
@@ -273,11 +303,71 @@ def song_genres(rec, artists, genre_names):
     return pick(tags) or pick([t for aid in artist_ids for t in artists.get(aid, [])])
 
 
+# Who played what is stored as relationships, which no search index contains, so
+# unlike phases 2 and 3 this cannot be batched: one lookup per release. It returns the
+# "instrument" relationships of every recording on the release (artist X played
+# guitar) and those credited to the release as a whole.
+NOT_INSTRUMENTS = {"additional", "guest", "solo"}  # the relationship's other attributes
+SAVE_EVERY = 25  # lookups between checkpoint writes
+
+
+def instruments_of(entity):
+    return sorted({a for rel in entity.get("relations", []) if rel.get("type") == "instrument"
+                   for a in rel.get("attributes", []) if a not in NOT_INSTRUMENTS})
+
+
+assert instruments_of({"relations": [
+    {"type": "instrument", "attributes": ["guest", "piano"]},
+    {"type": "instrument", "attributes": ["piano", "drums (drum set)"]},
+    {"type": "vocal", "attributes": ["lead vocals"]}]}) == ["drums (drum set)", "piano"]
+
+
+def phase4_instruments(state):
+    """Fetch instrument credits; per recording: [its own, those of its releases]."""
+    instruments = state.setdefault("instruments", {})
+    done = state.setdefault("done_instrument_releases", [])
+    seen = set(done)
+    todo = [rid for rid in state["releases"] if rid not in seen]
+    print(f"  instruments: {len(todo)} releases left "
+          f"(~{len(todo) * RATE_LIMIT_SECONDS / 60:.0f} min)")
+    for i, rid in enumerate(todo, 1):
+        try:
+            rel = get(f"release/{rid}", {"inc": "recordings+artist-rels+recording-level-rels"})
+        except requests.HTTPError as e:
+            if e.response.status_code != 404:
+                raise
+            rel = {}  # release was deleted after the search found it
+        on_release = set(instruments_of(rel))
+        for medium in rel.get("media", []):
+            for track in medium.get("tracks", []):
+                rec = track.get("recording", {})
+                if rec.get("id") in state["recordings"]:
+                    shared = instruments.get(rec["id"], [[], []])[1]
+                    instruments[rec["id"]] = [instruments_of(rec),
+                                              sorted(on_release | set(shared))]
+        done.append(rid)
+        if i % SAVE_EVERY == 0 or i == len(todo):
+            save_state(state)
+            print(f"  instruments: {i}/{len(todo)}  recordings with credits so far: "
+                  f"{sum(any(v) for v in instruments.values())}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true", help="search phase only")
+    ap.add_argument("--no-instruments", action="store_true",
+                    help="skip the slow instrument phase (the column is left empty "
+                         "for songs not looked up yet)")
+    ap.add_argument("--years", nargs=2, type=int, default=[1970, 1970],
+                    metavar=("FIRST", "LAST"), help="crawl every year FIRST..LAST")
     args = ap.parse_args()
+    for year in range(args.years[0], args.years[1] + 1):
+        print(f"\n##### {year} #####")
+        set_year(year)
+        crawl_year(args.quick, not args.no_instruments)
 
+
+def crawl_year(quick, with_instruments=True):
     state = load_state()
     if any(len(rec) < 7 for rec in state["recordings"].values()):
         # checkpoint from before genres/year/country were collected: redo the lookup phase
@@ -290,7 +380,7 @@ def main():
     print(f"\nReleases found: {len(releases)} (API reported {state['search_total']})")
     print(f"Upper bound (sum of track counts, not deduped): {upper}")
 
-    if args.quick:
+    if quick:
         return
 
     print("\nPhase 2: looking up tracklists...")
@@ -302,14 +392,21 @@ def main():
     phase3_genres(state)
     genre_names = fetch_genre_names()
 
+    if with_instruments:
+        print("\nPhase 4: looking up instrument credits...")
+        phase4_instruments(state)
+    instruments = state.get("instruments", {})
+
     with open(f"songs_{YEAR}.csv", "w", encoding="utf-8") as f:
-        f.write("id,song,artist,genre,year,language,country,genres\n")
+        f.write("id,song,artist,genre,year,language,country,genres,instruments\n")
         esc = lambda s: '"' + (s or "").replace('"', '""') + '"'
         for rid, rec in state["recordings"].items():
             genres = song_genres(rec, state["artists"], genre_names)
+            own, shared = instruments.get(rid, [[], []])
             f.write(f"{rid},{esc(rec[0])},{esc(rec[1])},"
                     f"{esc(genres[0] if genres else '')},{rec[4]},{rec[6] or ''},"
-                    f"{rec[5] or ''},{esc(';'.join(genres))}\n")
+                    f"{rec[5] or ''},{esc(';'.join(genres))},"
+                    f"{esc(';'.join(own or shared))}\n")
     print(f"Wrote songs_{YEAR}.csv")
 
 
