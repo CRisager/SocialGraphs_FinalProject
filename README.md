@@ -20,6 +20,11 @@ pages, non-song Genius pages), which writes
 ```dataCleaner/combine.py``` to attach Genius lyrics to the MusicBrainz songs,
 which writes ```songs_1970-1980_lyrics.csv```.
 
+During cleaning, primary genre labels are reduced to automatically discovered
+single-word core genres. For compound labels, the rightmost recognized core
+genre wins (for example, `pop rock` becomes `rock`). The original full labels
+remain in `genres`.
+
 ### Interactive genre network
 
 For a temporary interactive circular view of the genre network, run:

@@ -121,12 +121,43 @@ def join_lists(s):
     return join_unique(s.dropna().astype(str).str.split(";").explode())
 
 
+def genre_key(value):
+    """Make genre labels comparable while preserving their display spelling."""
+    return re.sub(r"[^a-z0-9]+", "", unicodedata.normalize("NFKC", str(value)).casefold())
+
+
+def core_genres(values):
+    """Discover core genres from labels that contain no spaces."""
+    return {
+        genre_key(label)
+        for value in values.dropna()
+        for label in str(value).split(";")
+        if label.strip() and len(label.split()) == 1
+    }
+
+
+def primary_genre(value, cores):
+    """Choose the rightmost recognized core genre from a full genre label."""
+    if value is None or pd.isna(value):
+        return None
+    labels = [label.strip() for label in str(value).split(";") if label.strip()]
+    for label in reversed(labels):
+        words = label.split()
+        for word in reversed(words):
+            if genre_key(word) in cores:
+                return word.casefold()
+    return labels[0].casefold() if labels else None
+
+
 assert join_lists(pd.Series(["rock;pop", "pop;soul", None])) == "rock;pop;soul"
 assert join_lists(pd.Series([None, float("nan")])) is None
+assert primary_genre("pop rock", {"pop", "rock"}) == "rock"
+assert primary_genre("rock pop", {"pop", "rock"}) == "pop"
 
 
 def clean_musicbrainz(mb):
     mb = add_keys(mb, "song", "artist")
+    cores = core_genres(mb["genres"])
     mb["group"] = merge_groups(mb, [cols for cols, _ in MATCH_RULES])
     # representative row: the shortest title, e.g. "Lola" over "Lola (mono single mix)"
     # and "Part 1" over "Part 2"
@@ -137,7 +168,7 @@ def clean_musicbrainz(mb):
     songs["genres"] = grouped.genres.agg(join_lists)
     if "instruments" in mb:  # absent in songs_<year>.csv written before the crawler had it
         songs["instruments"] = grouped.instruments.agg(join_lists)
-    songs["genre"] = songs.genres.str.split(";").str[0]
+    songs["genre"] = songs.genres.map(lambda value: primary_genre(value, cores))
     return songs.reset_index(drop=True).drop(columns=["n"] + KEY_COLS)
 
 
