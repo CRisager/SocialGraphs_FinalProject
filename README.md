@@ -1,37 +1,7 @@
 # SocialGraphs_FinalProject
 
 ### Downloading the datasets
-Run ```Crawler-musicBrainz.py``` and ```download-Genius.py```. Do note the crawler may get timed out if run too often as to not break rules regarding rate limits. Additionally the Genius dataset downloader needs at least 9gb free space on the disk.
+Run ```python dataDownload/crawler-musicBrainz.py --years 1970 1980``` (one ```songs_<year>.csv``` per year, resumable) and ```python dataDownload/download-Genius.py``` (keeps Genius songs from 1970-1980). The year range used by everything after the download is set by ```FIRST_YEAR, LAST_YEAR``` in ```dataCleaner/clean.py```. Each song gets its genres and the instruments credited on the recording (column ```instruments```, empty where MusicBrainz has no credits). The instrument phase needs one request per release, about 5.5 hours for 1970-1980; add ```--no-instruments``` to skip it. Do note the crawler may get timed out if run too often as to not break rules regarding rate limits. Additionally the Genius dataset downloader needs at least 9gb free space on the disk.
 
-### Filtering the lyrics dataset
-To keep only lyrics whose title and artist occur in `songs_1970.csv`, run:
-
-```bash
-python3 filter_song_lyrics.py
-```
-
-The matching rows are written to `data/song_lyrics_1970.csv`. The lyrics CSV is
-processed as a stream, so the complete dataset does not need to fit in memory.
-
-### Data processing and exploration
-
-After both source datasets have been generated, run. The commands below assume
-the CSV files are in the repository root; the notebook also detects `Data/`
-and `data/` folders automatically:
-
-```bash
-python filter_song_lyrics.py
-python data_exploration.py
-```
-
-Alternatively, open `main.ipynb` and execute its cells in order to inspect each
-stage interactively.
-
-The analysis writes to `analysis/`: cleaned song data, lyric TF-IDF and
-genre features, exploratory plots, K-means labels, a shared-genre/artist
-community graph (`song_similarity.gexf`), and community assignments.
-Lyrics are lower-cased, section labels and punctuation are removed, and
-matching uses normalized title/artist keys. The feature set includes primary
-metadata, multi-label genres, and lyric unigrams/bigrams. Community detection
-uses greedy modularity on a weighted song projection where songs are linked
-when they share an artist or genre.
+### Cleaning and combining
+Run ```dataCleaner/clean.py``` to clean both datasets (duplicates, version pages, non-song Genius pages), which writes ```songs_1970-1980_clean.csv``` and ```genius_1970-1980_clean.csv```. Then run ```dataCleaner/combine.py``` to attach Genius lyrics to the MusicBrainz songs, which writes ```songs_1970-1980_lyrics.csv```.
