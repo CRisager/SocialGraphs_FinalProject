@@ -16,6 +16,8 @@ import argparse
 import html
 import json
 import math
+import random
+from bisect import bisect_right
 from collections import defaultdict
 from pathlib import Path
 
@@ -40,8 +42,27 @@ PALETTE = [
 ]
 
 
-def build_genre_graph(songs: pd.DataFrame) -> nx.Graph:
-    """Build a weighted song graph from shared overall genres and subgenres."""
+def sampled_pairs(song_ids: list[str], limit: int, seed: int) -> list[tuple[str, str]]:
+    """Sample pairwise combinations without materializing every combination."""
+    count = len(song_ids)
+    total = count * (count - 1) // 2
+    amount = min(limit, total)
+    if amount == 0:
+        return []
+    starts = [index * (2 * count - index - 1) // 2 for index in range(count - 1)]
+    random_indices = random.Random(seed).sample(range(total), amount)
+    pairs = []
+    for pair_index in random_indices:
+        left_index = bisect_right(starts, pair_index) - 1
+        right_index = left_index + 1 + pair_index - starts[left_index]
+        pairs.append((song_ids[left_index], song_ids[right_index]))
+    return pairs
+
+
+def build_genre_graph(
+    songs: pd.DataFrame, max_edges_per_genre: int = 500
+) -> nx.Graph:
+    """Build a weighted song graph from sampled shared genre relationships."""
     graph = nx.Graph()
     graph.add_nodes_from(songs["id"].astype(str))
     genre_songs: dict[str, list[str]] = defaultdict(list)
@@ -55,11 +76,11 @@ def build_genre_graph(songs: pd.DataFrame) -> nx.Graph:
             genre_songs[genre].append(song_id)
 
     shared_genres: dict[tuple[str, str], set[str]] = defaultdict(set)
-    for genre, song_ids in genre_songs.items():
-        for index, left in enumerate(song_ids):
-            for right in song_ids[index + 1 :]:
-                pair = tuple(sorted((left, right)))
-                shared_genres[pair].add(genre)
+    for genre_index, genre in enumerate(sorted(genre_songs)):
+        for left, right in sampled_pairs(
+            genre_songs[genre], max_edges_per_genre, seed=genre_index
+        ):
+            shared_genres[tuple(sorted((left, right)))].add(genre)
 
     for (left, right), genres in shared_genres.items():
         graph.add_edge(left, right, weight=len(genres), genres=sorted(genres))
@@ -87,8 +108,10 @@ def circular_community_positions(
     return positions
 
 
-def make_figure(songs: pd.DataFrame) -> tuple[go.Figure, dict[str, list[int]]]:
-    graph = build_genre_graph(songs)
+def make_figure(
+    songs: pd.DataFrame, max_edges_per_genre: int = 500
+) -> tuple[go.Figure, dict[str, list[int]]]:
+    graph = build_genre_graph(songs, max_edges_per_genre)
     communities = list(
         nx.community.greedy_modularity_communities(graph, weight="weight")
     )
@@ -194,8 +217,10 @@ def make_figure(songs: pd.DataFrame) -> tuple[go.Figure, dict[str, list[int]]]:
     }
 
 
-def write_visualization(songs: pd.DataFrame, output: Path) -> None:
-    figure, adjacency = make_figure(songs)
+def write_visualization(
+    songs: pd.DataFrame, output: Path, max_edges_per_genre: int = 500
+) -> None:
+    figure, adjacency = make_figure(songs, max_edges_per_genre)
     plot_id = "genre-network"
     adjacency_json = json.dumps(adjacency, separators=(",", ":"))
     post_script = f"""
@@ -244,6 +269,8 @@ plot.on('plotly_unhover', function() {{
 def default_songs_path() -> Path:
     """Prefer Jonathan's cleaned output, falling back to the original dataset."""
     for path in (
+        Path("songs_1970-1980_lyrics.csv"),
+        Path("songs_1970-1980_clean.csv"),
         Path("songs_1970_lyrics.csv"),
         Path("songs_1970_clean.csv"),
         Path("Data/songs_1970.csv"),
@@ -257,6 +284,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--songs", type=Path, default=None)
     parser.add_argument(
+        "--max-edges-per-genre",
+        type=int,
+        default=500,
+        help="Maximum sampled edges contributed by each genre (default: 500)",
+    )
+    parser.add_argument(
         "--output", type=Path, default=Path("analysis/genre_network.html")
     )
     args = parser.parse_args()
@@ -264,8 +297,10 @@ def main() -> None:
     songs = load_songs(songs_path)
     if songs.empty:
         raise ValueError(f"{songs_path} does not contain any songs")
-    write_visualization(songs, args.output)
-    graph = build_genre_graph(songs)
+    if args.max_edges_per_genre < 1:
+        parser.error("--max-edges-per-genre must be at least 1")
+    write_visualization(songs, args.output, args.max_edges_per_genre)
+    graph = build_genre_graph(songs, args.max_edges_per_genre)
     print(
         f"Wrote {args.output}: {graph.number_of_nodes()} songs and "
         f"{graph.number_of_edges()} shared-genre edges from {songs_path}"

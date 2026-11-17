@@ -38,3 +38,5 @@ an overall genre or subgenre, node colors use the primary genre, and hovering
 over a node shows its song, artist, and year while highlighting its edges.
 When available, the script automatically uses Jonathan's
 `songs_1970_lyrics.csv` output.
+For large datasets, the default is 500 sampled edges per genre; change this
+with `--max-edges-per-genre`.
