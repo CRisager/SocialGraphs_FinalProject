@@ -31,3 +31,5 @@ python genre_network_visualization.py
 This writes `analysis/genre_network.html`. Songs are connected when they share
 an overall genre or subgenre, node colors use the primary genre, and hovering
 over a node shows its song, artist, and year while highlighting its edges.
+When available, the script automatically uses Jonathan's
+`songs_1970_lyrics.csv` output.

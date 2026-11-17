@@ -7,6 +7,9 @@ edges, so subgenre relationships are included as well.
 Example:
 
     python genre_network_visualization.py
+
+The script prefers ``songs_1970_lyrics.csv`` and ``songs_1970_clean.csv`` from
+the cleaning pipeline, then falls back to ``Data/songs_1970.csv``.
 """
 
 import argparse
@@ -238,23 +241,34 @@ plot.on('plotly_unhover', function() {{
     )
 
 
+def default_songs_path() -> Path:
+    """Prefer Jonathan's cleaned output, falling back to the original dataset."""
+    for path in (
+        Path("songs_1970_lyrics.csv"),
+        Path("songs_1970_clean.csv"),
+        Path("Data/songs_1970.csv"),
+    ):
+        if path.exists():
+            return path
+    return Path("songs_1970_lyrics.csv")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--songs", type=Path, default=Path("Data/songs_1970.csv")
-    )
+    parser.add_argument("--songs", type=Path, default=None)
     parser.add_argument(
         "--output", type=Path, default=Path("analysis/genre_network.html")
     )
     args = parser.parse_args()
-    songs = load_songs(args.songs)
+    songs_path = args.songs or default_songs_path()
+    songs = load_songs(songs_path)
     if songs.empty:
-        raise ValueError(f"{args.songs} does not contain any songs")
+        raise ValueError(f"{songs_path} does not contain any songs")
     write_visualization(songs, args.output)
     graph = build_genre_graph(songs)
     print(
         f"Wrote {args.output}: {graph.number_of_nodes()} songs and "
-        f"{graph.number_of_edges()} shared-genre edges"
+        f"{graph.number_of_edges()} shared-genre edges from {songs_path}"
     )
 
 
