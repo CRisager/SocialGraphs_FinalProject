@@ -30,6 +30,15 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 
+
+def source_file(name):
+    """Find downloaded source files in the root or the legacy Data folder."""
+    for path in (ROOT / name, ROOT / "Data" / name):
+        if path.exists():
+            return path
+    return ROOT / name
+
+
 # Years to use. Every script after this one reads the files named by YEARS.
 FIRST_YEAR, LAST_YEAR = 1970, 1980
 YEARS = str(FIRST_YEAR) if FIRST_YEAR == LAST_YEAR else f"{FIRST_YEAR}-{LAST_YEAR}"
@@ -185,9 +194,9 @@ def clean_genius(g):
 
 
 def main():
-    mb_raw = pd.concat([pd.read_csv(ROOT / f"songs_{y}.csv")
+    mb_raw = pd.concat([pd.read_csv(source_file(f"songs_{y}.csv"))
                         for y in range(FIRST_YEAR, LAST_YEAR + 1)], ignore_index=True)
-    genius_raw = pd.read_csv(ROOT / "genius_songs_trimmed.csv")
+    genius_raw = pd.read_csv(source_file("genius_songs_trimmed.csv"))
     genius_raw = genius_raw[genius_raw.year.between(FIRST_YEAR, LAST_YEAR)]
     if genius_raw.year.nunique() < LAST_YEAR - FIRST_YEAR + 1:
         raise SystemExit(f"genius_songs_trimmed.csv lacks some of the years {YEARS}; "
