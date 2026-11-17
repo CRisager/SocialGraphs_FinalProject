@@ -16,9 +16,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import networkx as nx
 import pandas as pd
-from sklearn.cluster import KMeans
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.preprocessing import MultiLabelBinarizer
 
 
 def normalise(value: str) -> str:
@@ -68,7 +65,6 @@ def write_exploration_plots(songs: pd.DataFrame, output: Path) -> None:
     for column, filename, title in [
         ("genre", "genre_counts.png", "Songs by primary genre"),
         ("country", "country_counts.png", "Songs by release country"),
-        ("language", "language_counts.png", "Songs by language"),
     ]:
         counts = songs[column].replace("", "Unknown").value_counts().head(20).sort_values()
         ax = counts.plot.barh(figsize=(9, 6), title=title)
@@ -87,6 +83,10 @@ def write_exploration_plots(songs: pd.DataFrame, output: Path) -> None:
 
 
 def build_features(songs: pd.DataFrame, output: Path) -> None:
+    from sklearn.cluster import KMeans
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.preprocessing import MultiLabelBinarizer
+
     genres = MultiLabelBinarizer()
     genre_matrix = genres.fit_transform(songs["genre_list"])
     feature_names = [f"genre:{name}" for name in genres.classes_]
