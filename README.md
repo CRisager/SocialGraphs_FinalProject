@@ -12,3 +12,15 @@ python3 filter_song_lyrics.py
 
 The matching rows are written to `data/song_lyrics_1970.csv`. The lyrics CSV is
 processed as a stream, so the complete dataset does not need to fit in memory.
+
+### Tokenizing the 1970 lyrics
+Install `tiktoken`, then tokenize the filtered lyrics with the `o200k_base`
+encoding:
+
+```bash
+pip install tiktoken
+python3 tokenize_1970_lyrics.py
+```
+
+The output is written to `data/song_lyrics_1970_tokenized.csv` and includes
+`token_count` plus a JSON list of token IDs in `lyrics_token_ids`.
