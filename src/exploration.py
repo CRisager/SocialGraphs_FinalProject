@@ -16,9 +16,12 @@ import pandas as pd
 from matplotlib.ticker import PercentFormatter
 
 from .clean import SECTION_HEADER
+from .combine import genre_label
 from .config import (BLUE, FIG_DIR, FIRST_YEAR, GENIUS_RAW, GREY, LAST_YEAR, PLOT_STYLE,
-                     TAG_COLORS, YEAR_RANGE, musicbrainz_checkpoint, musicbrainz_raw)
+                     TAG_COLORS, YEAR_RANGE, discogs_songs, musicbrainz_checkpoint,
+                     musicbrainz_raw)
 from .data import load_data
+from .text import tokens_for
 
 TAGS = list(TAG_COLORS)  # Genius tags in a fixed order
 
@@ -71,6 +74,55 @@ def genius_funnel(genius):
     return t.T.astype(int)
 
 
+def credit_coverage(year=FIRST_YEAR):
+    """Credit coverage of one year's songs on MusicBrainz vs Discogs, per genre (the
+    mb_label scheme without rap). Rates per genre:
+      matched     share found on Discogs (MusicBrainz: all, they come from there)
+      instrument  share with >= 1 instrument credit. MusicBrainz falls back from the
+                  recording to its releases; for Discogs both track-level and
+                  track-or-album are shown
+      producer    share with >= 1 producer credit (MusicBrainz: only once the crawler
+                  has been re-run with the credits phase)
+      over-rep.   the genre's share of instrument-credited songs / its share of songs
+                  (1 = proportional, > 1 = over-represented)
+    Reads data/raw/songs_<year>.csv and, if there, data/raw/discogs_<year>.csv.
+    Returns None when songs_<year>.csv was crawled without credits."""
+    def has(col):
+        return col.fillna("").astype(str).str.len() > 0
+
+    labels = [t for t in TAGS if t != "rap"]
+    mb = pd.read_csv(musicbrainz_raw(year))
+    if "instruments" not in mb:
+        return None
+    songs = pd.DataFrame({"id": mb.id,
+                          "genre": [genre_label(g, p) for g, p in zip(mb.genres, mb.genre)],
+                          "mb instrument": has(mb.instruments)})
+    if "producers" in mb:
+        songs["mb producer"] = has(mb.producers)
+    if discogs_songs(year).exists():
+        dc = pd.read_csv(discogs_songs(year)).set_index("id").reindex(songs.id)
+        songs["discogs matched"] = has(dc["match"]).to_numpy()
+        songs["discogs instrument (track)"] = has(dc.instruments).to_numpy()
+        songs["discogs instrument (track or album)"] = \
+            (has(dc.instruments) | has(dc.album_instruments)).to_numpy()
+        songs["discogs producer (track or album)"] = \
+            (has(dc.producers) | has(dc.album_producers)).to_numpy()
+
+    songs = songs[songs.genre.isin(labels)]
+    flags = [c for c in songs.columns if c not in ("id", "genre")]
+    by = songs.groupby("genre")
+    table = pd.DataFrame({"songs": by.size()}).reindex(labels)
+    table.loc["all"] = len(songs)
+    table["share"] = table.songs / len(songs)
+    for col in flags:
+        table[col] = by[col].mean().reindex(labels).tolist() + [songs[col].mean()]
+        if "instrument" in col:
+            credited = by[col].sum().reindex(labels)
+            ratio = (credited / credited.sum()) / table.share[labels]
+            table[col + " over-rep."] = ratio.tolist() + [1.0]
+    return table.T
+
+
 def label_agreement(songs):
     """Genius tag (rows) vs MusicBrainz label (columns) for songs that have both."""
     both = songs.genius_tag.notna() & songs.mb_label.notna()
@@ -80,14 +132,15 @@ def label_agreement(songs):
 
 
 def lyric_stats(songs):
-    """Songs with lyrics, with word counts and the share of repeated lines."""
+    """Songs with lyrics, with word counts (all words), the share of repeated lines,
+    and the filtered spaCy tokens (src/text.py) used for distinctive words."""
     lyr = songs[songs.lyrics.notna()].copy()
-    tokens = lyr.lyrics.str.lower().str.findall(r"[a-z]+(?:'[a-z]+)?")
+    all_words = lyr.lyrics.str.lower().str.findall(r"[a-z]+(?:'[a-z]+)?")
     lines = lyr.lyrics.str.lower().str.split("\n").map(
         lambda ls: [line.strip() for line in ls if line.strip()])
-    lyr["tokens"] = tokens
-    lyr["words"] = tokens.str.len()
-    lyr["distinct_words"] = tokens.map(lambda t: len(set(t)))
+    lyr["tokens"] = tokens_for(lyr.lyrics)
+    lyr["words"] = all_words.str.len()
+    lyr["distinct_words"] = all_words.map(lambda t: len(set(t)))
     lyr["repeated_lines"] = lines.map(lambda ls: 1 - len(set(ls)) / len(ls) if ls else 0)
     return lyr
 

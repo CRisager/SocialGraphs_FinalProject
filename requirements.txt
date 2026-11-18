@@ -1,5 +1,6 @@
 ipykernel
 kagglehub
+lxml
 matplotlib
 networkx
 numpy
@@ -7,3 +8,5 @@ pandas
 plotly
 requests
 scikit-learn
+scipy
+spacy

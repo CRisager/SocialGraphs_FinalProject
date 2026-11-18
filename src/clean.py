@@ -6,7 +6,7 @@ Clean the raw MusicBrainz (data/raw/songs_<year>.csv) and Genius
                 countries (one recording id each), as mono/single/instrumental
                 versions, split into Part 1 / Part 2, or credited slightly differently
                 ("Merle Haggard" vs "Merle Haggard and The Strangers"). These are merged
-                into one row; genres, instruments and release countries are combined.
+                into one row; genres, credits and release countries are combined.
   Genius      - non-song pages (tag "misc": poems, court rulings, speeches, ...) and
                 non-English lyrics are dropped, version pages ("Mono", "Live",
                 "2021 Remaster", "Alternate Mix", ...) are merged into the original,
@@ -61,6 +61,7 @@ MATCH_RULES = [
     (("title_core", "artist_main"), "main artist, title variant"),
 ]
 KEY_COLS = ["title_key", "title_core", "artist_key", "artist_main"]
+CREDIT_COLS = ["instruments", "producers", "musicians", "vocals", "labels"]
 
 
 def ascii_words(s):
@@ -166,8 +167,9 @@ def clean_musicbrainz(mb):
     grouped = mb.groupby("group")
     songs["countries"] = grouped.country.agg(join_unique)
     songs["genres"] = grouped.genres.agg(join_lists)
-    if "instruments" in mb:  # absent in songs_<year>.csv written before the crawler had it
-        songs["instruments"] = grouped.instruments.agg(join_lists)
+    for col in CREDIT_COLS:  # absent in songs_<year>.csv written before the crawler had them
+        if col in mb:
+            songs[col] = grouped[col].agg(join_lists)
     songs["genre"] = songs.genres.map(lambda value: primary_genre(value, cores))
     return songs.reset_index(drop=True).drop(columns=["n"] + KEY_COLS)
 

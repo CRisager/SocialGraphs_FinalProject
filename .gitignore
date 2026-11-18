@@ -3,6 +3,8 @@ data/
 *.csv
 *.json
 *.zip
+# ...except the small result tables, which are worth sharing
+!results/*.csv
 
 # large interactive figures (regenerate with main.ipynb or python -m src.<module>)
 figures/*.html
