@@ -63,13 +63,27 @@ The output CSV retains all original lyrics fields and adds:
 - `filtered_token_count`: number of tokens remaining after the filtering
   described above.
 - `filtered_lyrics_tokens`: JSON list of the remaining whole-word token strings.
+- `cross_song_filtered_token_count`: number of retained words that occur in at
+  least two distinct songs.
+- `cross_song_filtered_lyrics_tokens`: JSON list of filtered words after
+  removing words that appear in only one song.
 
 The original, unfiltered token fields remain available so that filtering choices
 can be inspected or changed without retokenizing from the source lyrics.
 
+### Removing words that occur in only one song
+
+After tokenization, the script performs a post-processing pass over the complete
+tokenized CSV. It calculates document frequency by counting, for each word, the
+number of distinct songs containing that word. Repeated occurrences within the
+same song count only once for this step.
+
+Words are retained in `cross_song_filtered_lyrics_tokens` only when they occur
+in at least two distinct songs. Words appearing in no more than one song are
+removed. This threshold can be changed by passing a different
+`minimum_songs` value to `remove_single_song_words()`.
+
 ### Counting the most frequent words
 
-The notebook aggregates `filtered_lyrics_tokens` across the 303 rows in
-`data/song_lyrics_1970_tokenized.csv` using Python's `collections.Counter`.
-Counts therefore include all selected 1970 songs in the output dataset, not only
-`Let It Be`. The example-song cell counts only the first `Let It Be` row.
+The notebook aggregates `cross_song_filtered_lyrics_tokens` across the 303 rows
+in `data/song_lyrics_1970_tokenized.csv` using Python's `collections.Counter`.
