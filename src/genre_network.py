@@ -1,15 +1,15 @@
-"""Create an interactive circular community view of the song genre network.
+"""Songs connected by shared genres: communities and an interactive circular view.
 
-Songs are connected when their multi-label genre lists overlap.  The primary
-``genre`` column controls node colors; the complete ``genres`` column controls
-edges, so subgenre relationships are included as well.
+Songs are connected when their multi-label genre lists overlap. Each genre contributes
+at most `max_edges_per_genre` randomly sampled song pairs, so big genres like rock do
+not swamp the graph. Edge weight = number of shared genres. Greedy modularity finds the
+communities, which are laid out as arcs of a circle; node colour is the primary genre,
+and hovering a node highlights its edges.
 
-Example:
+Songs without any MusicBrainz genre are left out.
 
-    python genre_network_visualization.py
-
-The script prefers ``songs_1970_lyrics.csv`` and ``songs_1970_clean.csv`` from
-the cleaning pipeline, then falls back to ``Data/songs_1970.csv``.
+Usage:
+    python -m src.genre_network          # writes figures/genre_network.html
 """
 
 import argparse
@@ -19,13 +19,13 @@ import math
 import random
 from bisect import bisect_right
 from collections import defaultdict
-from pathlib import Path
 
 import networkx as nx
 import pandas as pd
 import plotly.graph_objects as go
 
-from data_exploration import load_songs
+from .config import FIG_DIR
+from .data import load_data
 
 
 PALETTE = [
@@ -40,6 +40,17 @@ PALETTE = [
     "#9c755f",
     "#bab0ab",
 ]
+
+
+def prepare_songs(songs: pd.DataFrame) -> pd.DataFrame:
+    """Songs with at least one genre, with `genre_list` = the set of their genres."""
+    songs = songs[songs["genre"].notna() & songs["genres"].notna()].copy()
+    songs["id"] = songs["id"].astype(str)
+    songs["genre_list"] = [
+        sorted({g.strip().casefold() for g in genres.split(";") if g.strip()})
+        for genres in songs["genres"]
+    ]
+    return songs.reset_index(drop=True)
 
 
 def sampled_pairs(song_ids: list[str], limit: int, seed: int) -> list[tuple[str, str]]:
@@ -70,7 +81,7 @@ def build_genre_graph(
     for _, row in songs.iterrows():
         song_id = str(row["id"])
         genres = set(row["genre_list"])
-        if row["genre"]:
+        if isinstance(row["genre"], str) and row["genre"]:
             genres.add(str(row["genre"]).casefold())
         for genre in genres:
             genre_songs[genre].append(song_id)
@@ -108,13 +119,33 @@ def circular_community_positions(
     return positions
 
 
+def find_communities(graph: nx.Graph) -> list[set[str]]:
+    """Greedy modularity communities, biggest first."""
+    return sorted(nx.community.greedy_modularity_communities(graph, weight="weight"),
+                  key=len, reverse=True)
+
+
+def community_summary(songs: pd.DataFrame, graph: nx.Graph,
+                      communities: list[set[str]], min_size: int = 20) -> pd.DataFrame:
+    """Per community: size and the share of its most common primary genres."""
+    genre = songs.set_index("id")["genre"]
+    rows = []
+    for index, community in enumerate(communities):
+        if len(community) < min_size:
+            continue
+        shares = genre.loc[list(community)].value_counts(normalize=True)
+        rows.append({
+            "community": index,
+            "songs": len(community),
+            "top genres": ", ".join(f"{g} {s:.0%}" for g, s in shares.head(4).items()),
+            "purity": shares.iloc[0],
+        })
+    return pd.DataFrame(rows).set_index("community")
+
+
 def make_figure(
-    songs: pd.DataFrame, max_edges_per_genre: int = 500
+    songs: pd.DataFrame, graph: nx.Graph, communities: list[set[str]]
 ) -> tuple[go.Figure, dict[str, list[int]]]:
-    graph = build_genre_graph(songs, max_edges_per_genre)
-    communities = list(
-        nx.community.greedy_modularity_communities(graph, weight="weight")
-    )
     positions = circular_community_positions(graph, communities)
 
     primary_genres = songs["genre"].replace("", "Unknown").fillna("Unknown")
@@ -218,9 +249,9 @@ def make_figure(
 
 
 def write_visualization(
-    songs: pd.DataFrame, output: Path, max_edges_per_genre: int = 500
+    songs: pd.DataFrame, graph: nx.Graph, communities: list[set[str]], output
 ) -> None:
-    figure, adjacency = make_figure(songs, max_edges_per_genre)
+    figure, adjacency = make_figure(songs, graph, communities)
     plot_id = "genre-network"
     adjacency_json = json.dumps(adjacency, separators=(",", ":"))
     post_script = f"""
@@ -258,7 +289,7 @@ plot.on('plotly_unhover', function() {{
     output.write_text(
         figure.to_html(
             full_html=True,
-            include_plotlyjs=True,
+            include_plotlyjs="cdn",
             div_id=plot_id,
             post_script=post_script,
         ),
@@ -266,45 +297,43 @@ plot.on('plotly_unhover', function() {{
     )
 
 
-def default_songs_path() -> Path:
-    """Prefer Jonathan's cleaned output, falling back to the original dataset."""
-    for path in (
-        Path("songs_1970-1980_lyrics.csv"),
-        Path("songs_1970-1980_clean.csv"),
-        Path("songs_1970_lyrics.csv"),
-        Path("songs_1970_clean.csv"),
-        Path("Data/songs_1970.csv"),
-    ):
-        if path.exists():
-            return path
-    return Path("songs_1970_lyrics.csv")
+def analyse(songs: pd.DataFrame, max_edges_per_genre: int = 500,
+            output=FIG_DIR / "genre_network.html"):
+    """Build the graph, find communities and write the interactive view.
+    Returns (stats, community summary, graph, communities)."""
+    songs = prepare_songs(songs)
+    graph = build_genre_graph(songs, max_edges_per_genre)
+    communities = find_communities(graph)
+    write_visualization(songs, graph, communities, output)
+    primary = songs.set_index("id")["genre"]
+    genre_sets = [set(primary.index[primary == g]) for g in primary.unique()]
+    stats = pd.Series({
+        "songs (nodes)": graph.number_of_nodes(),
+        "shared-genre edges": graph.number_of_edges(),
+        "mean degree": 2 * graph.number_of_edges() / graph.number_of_nodes(),
+        "communities": len(communities),
+        "modularity of communities": nx.community.modularity(graph, communities, weight="weight"),
+        "modularity of primary genres": nx.community.modularity(graph, genre_sets, weight="weight"),
+    })
+    return stats, community_summary(songs, graph, communities), graph, communities
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--songs", type=Path, default=None)
     parser.add_argument(
         "--max-edges-per-genre",
         type=int,
         default=500,
         help="Maximum sampled edges contributed by each genre (default: 500)",
     )
-    parser.add_argument(
-        "--output", type=Path, default=Path("analysis/genre_network.html")
-    )
     args = parser.parse_args()
-    songs_path = args.songs or default_songs_path()
-    songs = load_songs(songs_path)
-    if songs.empty:
-        raise ValueError(f"{songs_path} does not contain any songs")
     if args.max_edges_per_genre < 1:
         parser.error("--max-edges-per-genre must be at least 1")
-    write_visualization(songs, args.output, args.max_edges_per_genre)
-    graph = build_genre_graph(songs, args.max_edges_per_genre)
-    print(
-        f"Wrote {args.output}: {graph.number_of_nodes()} songs and "
-        f"{graph.number_of_edges()} shared-genre edges from {songs_path}"
-    )
+    songs, _ = load_data()
+    stats, summary, _, _ = analyse(songs, args.max_edges_per_genre)
+    print(stats.round(3).to_string())
+    print(summary.to_string())
+    print(f"Wrote {FIG_DIR / 'genre_network.html'}")
 
 
 if __name__ == "__main__":

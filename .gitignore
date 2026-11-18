@@ -1,6 +1,11 @@
+# data: downloads and processed files are regenerated, never committed
+data/
 *.csv
 *.json
 *.zip
-/data
-/__pycache__
+
+# large interactive figures (regenerate with main.ipynb or python -m src.<module>)
+figures/*.html
+
 __pycache__/
+.ipynb_checkpoints/

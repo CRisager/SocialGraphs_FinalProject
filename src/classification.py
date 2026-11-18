@@ -10,15 +10,9 @@ All of an artist's songs are kept on the same side of each train/test split, so 
 model cannot score by recognising an artist. Scores are macro-F1 (1.0 = perfect; every
 genre counts equally, so always answering "rock" does not pay off).
 
-Needs songs_<years>_lyrics.csv and genius_<years>_clean.csv (see dataCleaner/).
-
 Usage:
-    pip install scikit-learn
-    python classification/classify_test.py
+    python -m src.classification
 """
-
-import sys
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -30,10 +24,10 @@ from sklearn.model_selection import StratifiedGroupKFold, cross_val_predict
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import FunctionTransformer, StandardScaler
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "dataCleaner"))
-from clean import YEARS  # noqa: E402  (the year range is set in clean.py)
-SEED = 0
+from .config import YEARS
+from .data import load_data
+
+SEED = 0  # kept separate from config.SEED so scores match earlier runs
 
 
 def count_features(texts):
@@ -62,8 +56,9 @@ def models():
     }
 
 
-def test(name, songs, label_col):
-    """Cross-validated macro-F1 per model; returns the word model's confusion matrix."""
+def test(name, songs, label_col, verbose=True):
+    """Cross-validated macro-F1 per model. Returns (scores as a pd.Series, the word
+    model's confusion matrix)."""
     songs = songs.dropna(subset=["lyrics", label_col])
     X, y, artists = songs.lyrics.to_numpy(), songs[label_col].to_numpy(), songs.artist.to_numpy()
     folds = StratifiedGroupKFold(5, shuffle=True, random_state=SEED)
@@ -72,29 +67,42 @@ def test(name, songs, label_col):
         pred = cross_val_predict(model, X, y, groups=artists, cv=folds)
         scores[model_name] = f1_score(y, pred, average="macro")
     labels = sorted(set(y))
-    print(f"{name:34s} {len(y):5d} songs   " +
-          "   ".join(f"{m} {s:.2f}" for m, s in scores.items()))
-    return pd.DataFrame(confusion_matrix(y, pred, labels=labels), index=labels, columns=labels)
+    if verbose:
+        print(f"{name:34s} {len(y):5d} songs   " +
+              "   ".join(f"{m} {s:.2f}" for m, s in scores.items()))
+    confusion = pd.DataFrame(confusion_matrix(y, pred, labels=labels),
+                             index=labels, columns=labels)
+    return pd.Series({"songs": len(y), **scores}, name=name), confusion
+
+
+def run_all(songs, genius, verbose=True):
+    """Every label set compared in the report. Returns (macro-F1 table, confusion
+    matrices of the word model on the Genius songs, with and without pop)."""
+    genius = genius[genius.tag != "rap"]  # only ~400 songs; hip hop starts ~1979
+    agree = songs[songs.labels_agree == True]  # noqa: E712
+    sets = [
+        ("MusicBrainz songs: Genius tag", songs, "genius_tag"),
+        ("MusicBrainz songs: MusicBrainz label", songs, "mb_label"),
+        ("MusicBrainz songs: both labels agree", agree, "label"),
+        (f"Genius {YEARS}: tag", genius, "tag"),
+        (f"Genius {YEARS}: tag, without pop", genius[genius.tag != "pop"], "tag"),
+    ]
+    scores, confusions = [], {}
+    for name, data, label_col in sets:
+        score, confusion = test(name, data, label_col, verbose)
+        scores.append(score)
+        confusions[name] = confusion
+    table = pd.DataFrame(scores).astype({"songs": int})
+    return table, {"with pop": confusions[sets[3][0]],
+                   "without pop": confusions[sets[4][0]]}
 
 
 def main():
-    matched = pd.read_csv(ROOT / f"songs_{YEARS}_lyrics.csv")
-    genius = pd.read_csv(ROOT / f"genius_{YEARS}_clean.csv")
-    genius = genius[genius.tag != "rap"]  # only 18 songs in 1970; hip hop starts ~1979
-
-    print("MusicBrainz songs with lyrics")
-    test("  Genius tag", matched, "genius_tag")
-    test("  MusicBrainz label", matched, "mb_label")
-    test("  only where both agree", matched[matched.labels_agree == True], "label")  # noqa: E712
-
-    print(f"\nAll Genius songs from {YEARS}")
-    with_pop = test("  Genius tag", genius, "tag")
-    without_pop = test("  Genius tag, without pop", genius[genius.tag != "pop"], "tag")
-
-    print("\nWord model on all Genius songs (rows = true genre, columns = predicted)")
-    print(with_pop.to_string())
-    print("\nSame without pop")
-    print(without_pop.to_string())
+    songs, genius = load_data()
+    _, confusions = run_all(songs, genius)
+    for name, confusion in confusions.items():
+        print(f"\nWord model on Genius songs {name} (rows = true genre, columns = predicted)")
+        print(confusion.to_string())
 
 
 if __name__ == "__main__":

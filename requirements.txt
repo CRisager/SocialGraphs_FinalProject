@@ -1,8 +1,9 @@
+ipykernel
 kagglehub
 matplotlib
 networkx
 numpy
 pandas
-pyvis
+plotly
 requests
 scikit-learn

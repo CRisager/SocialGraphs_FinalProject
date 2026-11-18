@@ -1,7 +1,7 @@
 """
 Count English-language songs first released in a given year (or range of years),
 using the MusicBrainz API. Each year is crawled separately, with its own checkpoint
-(mb_<year>_checkpoint.json) and output (songs_<year>.csv).
+(data/raw/mb_<year>_checkpoint.json) and output (data/raw/songs_<year>.csv).
 
 Definition used (adjust to taste):
   * "release"  = an official release dated YEAR whose tracklist language is English (lang:eng)
@@ -27,11 +27,10 @@ Four phases:
                1,600 releases. Skip it with --no-instruments.
 
 Usage:
-    pip install requests
-    python crawler-musicBrainz.py            # all phases, 1970 only
-    python crawler-musicBrainz.py --years 1970 1980   # every year 1970..1980
-    python crawler-musicBrainz.py --quick    # phase 1 only (fast upper bound)
-    python crawler-musicBrainz.py --no-instruments   # phases 1-3 only (minutes, not hours)
+    python -m src.download.musicbrainz                    # all phases, years from config.py
+    python -m src.download.musicbrainz --years 1970 1970  # a single year
+    python -m src.download.musicbrainz --quick            # phase 1 only (fast upper bound)
+    python -m src.download.musicbrainz --no-instruments   # phases 1-3 only (minutes, not hours)
 """
 
 import argparse
@@ -41,6 +40,8 @@ import sys
 import time
 
 import requests
+
+from ..config import FIRST_YEAR, LAST_YEAR, RAW_DIR, musicbrainz_checkpoint, musicbrainz_raw
 
 API = "https://musicbrainz.org/ws/2"
 # MusicBrainz requires a descriptive User-Agent with contact info, or it will block you.
@@ -53,7 +54,7 @@ def set_year(year):
     """The functions below crawl one year at a time, set here."""
     global YEAR, CHECKPOINT, QUERY
     YEAR = str(year)
-    CHECKPOINT = f"mb_{YEAR}_checkpoint.json"
+    CHECKPOINT = str(musicbrainz_checkpoint(YEAR))
     # Lucene query for the release search. Drop the NOT clause to include compilations.
     QUERY = (f'date:{YEAR} AND lang:{LANG} AND status:official AND type:single '
              f'AND NOT secondarytype:compilation')
@@ -358,9 +359,10 @@ def main():
     ap.add_argument("--no-instruments", action="store_true",
                     help="skip the slow instrument phase (the column is left empty "
                          "for songs not looked up yet)")
-    ap.add_argument("--years", nargs=2, type=int, default=[1970, 1970],
+    ap.add_argument("--years", nargs=2, type=int, default=[FIRST_YEAR, LAST_YEAR],
                     metavar=("FIRST", "LAST"), help="crawl every year FIRST..LAST")
     args = ap.parse_args()
+    RAW_DIR.mkdir(parents=True, exist_ok=True)
     for year in range(args.years[0], args.years[1] + 1):
         print(f"\n##### {year} #####")
         set_year(year)
@@ -397,7 +399,7 @@ def crawl_year(quick, with_instruments=True):
         phase4_instruments(state)
     instruments = state.get("instruments", {})
 
-    with open(f"songs_{YEAR}.csv", "w", encoding="utf-8") as f:
+    with open(musicbrainz_raw(YEAR), "w", encoding="utf-8") as f:
         f.write("id,song,artist,genre,year,language,country,genres,instruments\n")
         esc = lambda s: '"' + (s or "").replace('"', '""') + '"'
         for rid, rec in state["recordings"].items():
@@ -407,7 +409,7 @@ def crawl_year(quick, with_instruments=True):
                     f"{esc(genres[0] if genres else '')},{rec[4]},{rec[6] or ''},"
                     f"{rec[5] or ''},{esc(';'.join(genres))},"
                     f"{esc(';'.join(own or shared))}\n")
-    print(f"Wrote songs_{YEAR}.csv")
+    print(f"Wrote {musicbrainz_raw(YEAR)}")
 
 
 if __name__ == "__main__":

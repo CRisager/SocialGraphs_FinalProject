@@ -12,12 +12,12 @@ Labels
   keyword votes over the song's genre list (mb_label). The merged `label` is the Genius
   tag when the song matched, else mb_label; `labels_agree` shows where both exist.
 
-Output (repo root)
+Output (data/processed/)
   songs_<years>_lyrics.csv   every MusicBrainz song, with lyrics where a match was found
 
 Usage:
-    python dataCleaner/clean.py      # first, writes the *_clean.csv files
-    python dataCleaner/combine.py
+    python -m src.clean      # first, writes the *_clean.csv files
+    python -m src.combine
 """
 
 import re
@@ -25,7 +25,8 @@ from difflib import SequenceMatcher
 
 import pandas as pd
 
-from clean import MATCH_RULES, ROOT, YEARS, add_keys
+from .clean import MATCH_RULES, add_keys
+from .config import GENIUS_CLEAN, SONGS_CLEAN, SONGS_LYRICS
 
 FUZZY_THRESHOLD = 0.9  # below this, wrong pairs like "Waterloo" / "Water Boy" appear
 
@@ -82,9 +83,10 @@ def match(songs, genius):
                         index=songs.index, columns=["genius_index", "match"])
 
 
-def main():
-    songs = pd.read_csv(ROOT / f"songs_{YEARS}_clean.csv")
-    genius = pd.read_csv(ROOT / f"genius_{YEARS}_clean.csv")
+def run(songs=None, genius=None):
+    """Match the cleaned datasets, write songs_<years>_lyrics.csv and return it."""
+    songs = pd.read_csv(SONGS_CLEAN) if songs is None else songs
+    genius = pd.read_csv(GENIUS_CLEAN) if genius is None else genius
 
     found = match(add_keys(songs, "song", "artist"), add_keys(genius, "title", "artist"))
     lyrics = (genius[["title", "artist", "tag", "language", "lyrics"]]
@@ -109,9 +111,10 @@ def main():
     print(f"Genius and MusicBrainz agree on {combined.labels_agree.mean():.0%} "
           f"of the {both.sum()} songs labelled by both")
 
-    combined.to_csv(ROOT / f"songs_{YEARS}_lyrics.csv", index=False)
-    print(f"\nWrote songs_{YEARS}_lyrics.csv")
+    combined.to_csv(SONGS_LYRICS, index=False)
+    print(f"\nWrote {SONGS_LYRICS.name}")
+    return combined
 
 
 if __name__ == "__main__":
-    main()
+    run()

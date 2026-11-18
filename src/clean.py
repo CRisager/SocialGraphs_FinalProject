@@ -1,6 +1,6 @@
 """
-Clean songs_<year>.csv (MusicBrainz) and genius_songs_trimmed.csv (Genius) for the years
-FIRST_YEAR..LAST_YEAR set below.
+Clean the raw MusicBrainz (data/raw/songs_<year>.csv) and Genius
+(data/raw/genius_songs_trimmed.csv) downloads for the years set in src/config.py.
 
   MusicBrainz - the same song often appears several times: released in several
                 countries (one recording id each), as mono/single/instrumental
@@ -12,36 +12,27 @@ FIRST_YEAR..LAST_YEAR set below.
                 "2021 Remaster", "Alternate Mix", ...) are merged into the original,
                 and [Verse]/[Chorus] headers are removed from the lyrics.
 
+Primary genre labels are reduced to automatically discovered single-word core genres:
+for compound labels the rightmost recognised core genre wins ("pop rock" -> "rock").
+The full labels stay in `genres`.
+
 The title/artist normalisation here is also used by combine.py to match the two.
 
-Output (repo root; <years> is e.g. "1970-1980", or "1970" for one year)
+Output (data/processed/; <years> is e.g. "1970-1980")
   songs_<years>_clean.csv    deduplicated MusicBrainz songs
   genius_<years>_clean.csv   cleaned Genius songs
 
 Usage:
-    python dataCleaner/clean.py
+    python -m src.clean
 """
 
 import re
 import unicodedata
-from pathlib import Path
 
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[1]
-
-
-def source_file(name):
-    """Find downloaded source files in the root or the legacy Data folder."""
-    for path in (ROOT / name, ROOT / "Data" / name):
-        if path.exists():
-            return path
-    return ROOT / name
-
-
-# Years to use. Every script after this one reads the files named by YEARS.
-FIRST_YEAR, LAST_YEAR = 1970, 1980
-YEARS = str(FIRST_YEAR) if FIRST_YEAR == LAST_YEAR else f"{FIRST_YEAR}-{LAST_YEAR}"
+from .config import (FIRST_YEAR, GENIUS_CLEAN, GENIUS_RAW, LAST_YEAR, PROCESSED_DIR,
+                     SONGS_CLEAN, YEAR_RANGE, YEARS, musicbrainz_raw)
 
 # Trailing version markers, matched on normalised (lowercase ascii) titles. Genius drops
 # parentheses, so "Lola (mono single mix)" there is "Lola Mono Single Mix". Applied
@@ -193,14 +184,15 @@ def clean_genius(g):
             .drop_duplicates("group").sort_index().drop(columns=["n", "group"] + KEY_COLS))
 
 
-def main():
-    mb_raw = pd.concat([pd.read_csv(source_file(f"songs_{y}.csv"))
-                        for y in range(FIRST_YEAR, LAST_YEAR + 1)], ignore_index=True)
-    genius_raw = pd.read_csv(source_file("genius_songs_trimmed.csv"))
+def run():
+    """Clean both raw datasets, write them to data/processed/ and return them."""
+    mb_raw = pd.concat([pd.read_csv(musicbrainz_raw(y)) for y in YEAR_RANGE],
+                       ignore_index=True)
+    genius_raw = pd.read_csv(GENIUS_RAW)
     genius_raw = genius_raw[genius_raw.year.between(FIRST_YEAR, LAST_YEAR)]
-    if genius_raw.year.nunique() < LAST_YEAR - FIRST_YEAR + 1:
-        raise SystemExit(f"genius_songs_trimmed.csv lacks some of the years {YEARS}; "
-                         f"re-run dataDownload/download-Genius.py")
+    if genius_raw.year.nunique() < len(YEAR_RANGE):
+        raise SystemExit(f"{GENIUS_RAW.name} lacks some of the years {YEARS}; "
+                         f"re-run python -m src.download.genius")
 
     songs = clean_musicbrainz(mb_raw)
     print(f"MusicBrainz: {len(mb_raw)} recordings -> {len(songs)} songs")
@@ -211,10 +203,12 @@ def main():
           f"non-song 'misc' pages, {foreign.sum()} non-English, "
           f"{len(genius_raw) - misc.sum() - foreign.sum() - len(genius)} duplicates/versions)")
 
-    songs.to_csv(ROOT / f"songs_{YEARS}_clean.csv", index=False)
-    genius.to_csv(ROOT / f"genius_{YEARS}_clean.csv", index=False)
-    print(f"Wrote songs_{YEARS}_clean.csv, genius_{YEARS}_clean.csv")
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    songs.to_csv(SONGS_CLEAN, index=False)
+    genius.to_csv(GENIUS_CLEAN, index=False)
+    print(f"Wrote {SONGS_CLEAN.name}, {GENIUS_CLEAN.name}")
+    return songs, genius
 
 
 if __name__ == "__main__":
-    main()
+    run()
