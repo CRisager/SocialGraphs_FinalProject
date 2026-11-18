@@ -1,4 +1,5 @@
 kagglehub
+lxml
 matplotlib
 networkx
 numpy

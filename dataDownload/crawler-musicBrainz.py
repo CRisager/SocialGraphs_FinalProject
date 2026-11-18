@@ -10,10 +10,12 @@ Definition used (adjust to taste):
   * all genres  - no genre filter is applied, but each song is labelled with genres:
                  the recording's own genre tags if it has any, otherwise its artists'.
                  Only tags on MusicBrainz's official genre list count (so not "70s").
-  * instruments - each song is also labelled with the instruments credited on the
-                 recording ("artist X played guitar" relationships). Where a recording
-                 has none, those credited to its release as a whole are used. Most
-                 recordings have neither: MusicBrainz only knows what editors entered.
+  * credits     - each song is also labelled with who worked on it: producers,
+                 musicians (and the instruments they played), singers (lead and
+                 backing; the attributes in credits_<year>.csv tell them apart) and
+                 record labels. Credits on the recording itself are used where it has
+                 any, otherwise those on its releases. Most recordings have none:
+                 MusicBrainz only knows what editors entered.
 
 Four phases:
   1. Search  - pages through /ws/2/release search (100 per request) to list candidate releases.
@@ -22,23 +24,32 @@ Four phases:
                and dedupes them. MusicBrainz allows ~1 request/second; progress is
                checkpointed, so you can stop (Ctrl+C) and re-run to resume.
   3. Genres  - fetches the tags of ~45 artists per request via the artist search.
-  4. Instruments - one lookup per release (relationships are not in the search index),
+  4. Credits - one lookup per release (relationships are not in the search index),
                so this is the slow phase: ~1.1 s per release, about half an hour for
-               1,600 releases. Skip it with --no-instruments.
+               1,600 releases. Skip it with --no-credits.
+
+Output per year
+  songs_<year>.csv    one row per song; credit columns hold ';'-joined names
+  credits_<year>.csv  one row per credit (song, level, type, attributes, MusicBrainz id,
+                      name), labels included: what the collaboration graph is built from
+  collection_log.jsonl  one line per run: endpoint, query, dates, request count, rate
+                      limit and resulting counts (for the Methods section)
 
 Usage:
     pip install requests
     python crawler-musicBrainz.py            # all phases, 1970 only
     python crawler-musicBrainz.py --years 1970 1980   # every year 1970..1980
     python crawler-musicBrainz.py --quick    # phase 1 only (fast upper bound)
-    python crawler-musicBrainz.py --no-instruments   # phases 1-3 only (minutes, not hours)
+    python crawler-musicBrainz.py --no-credits   # phases 1-3 only (minutes, not hours)
 """
 
 import argparse
+import csv
 import json
 import os
 import sys
 import time
+from datetime import datetime, timezone
 
 import requests
 
@@ -64,6 +75,7 @@ set_year(1970)
 session = requests.Session()
 session.headers.update(HEADERS)
 _last_call = 0.0
+stats = {"requests": 0, "retries": 0}  # for the collection log
 
 
 def get(path, params):
@@ -77,6 +89,8 @@ def get(path, params):
             time.sleep(wait)
         _last_call = time.time()
         backoff = min(2 ** attempt, 60)
+        stats["requests"] += 1
+        stats["retries"] += attempt > 0
         try:
             r = session.get(f"{API}/{path}", params=params, timeout=30)
         except requests.RequestException as e:
@@ -99,7 +113,7 @@ def load_state():
             return json.load(f)
     return {"releases": {}, "search_offset": 0, "search_total": None,
             "done_releases": [], "recordings": {}, "artists": {},
-            "instruments": {}, "done_instrument_releases": []}
+            "recording_credits": {}, "release_credits": {}}
 
 
 def save_state(state):
@@ -303,71 +317,149 @@ def song_genres(rec, artists, genre_names):
     return pick(tags) or pick([t for aid in artist_ids for t in artists.get(aid, [])])
 
 
-# Who played what is stored as relationships, which no search index contains, so
+# Who worked on what is stored as relationships, which no search index contains, so
 # unlike phases 2 and 3 this cannot be batched: one lookup per release. It returns the
-# "instrument" relationships of every recording on the release (artist X played
-# guitar) and those credited to the release as a whole.
+# artist relationships of every recording on the release (X played guitar, Y produced)
+# and of the release as a whole, plus the release's labels.
+CREDITS_INC = "recordings+artist-rels+recording-level-rels+labels"
 NOT_INSTRUMENTS = {"additional", "guest", "solo"}  # the relationship's other attributes
 SAVE_EVERY = 25  # lookups between checkpoint writes
+# credit columns of songs_<year>.csv: which relationship types each one collects
+ROLES = {"producers": {"producer"}, "musicians": {"instrument"}, "vocals": {"vocal"}}
 
 
-def instruments_of(entity):
-    return sorted({a for rel in entity.get("relations", []) if rel.get("type") == "instrument"
-                   for a in rel.get("attributes", []) if a not in NOT_INSTRUMENTS})
+def artist_rels(entity):
+    """[type, artist id, artist name, attributes] of every artist credited on entity."""
+    return [[rel["type"], rel["artist"]["id"], rel["artist"]["name"], rel.get("attributes", [])]
+            for rel in entity.get("relations", []) if "artist" in rel]
 
 
-assert instruments_of({"relations": [
-    {"type": "instrument", "attributes": ["guest", "piano"]},
-    {"type": "instrument", "attributes": ["piano", "drums (drum set)"]},
-    {"type": "vocal", "attributes": ["lead vocals"]}]}) == ["drums (drum set)", "piano"]
+def release_labels(release):
+    return [[li["label"]["id"], li["label"]["name"]]
+            for li in release.get("label-info", []) if li.get("label")]
 
 
-def phase4_instruments(state):
-    """Fetch instrument credits; per recording: [its own, those of its releases]."""
-    instruments = state.setdefault("instruments", {})
-    done = state.setdefault("done_instrument_releases", [])
-    seen = set(done)
-    todo = [rid for rid in state["releases"] if rid not in seen]
-    print(f"  instruments: {len(todo)} releases left "
+def instruments_of(rels):
+    return sorted({a for t, _, _, attrs in rels if t == "instrument"
+                   for a in attrs if a not in NOT_INSTRUMENTS})
+
+
+def phase4_credits(state):
+    """Fetch credits. recording_credits: recording id -> its own artist relationships.
+    release_credits: release id -> [its artist relationships, its labels,
+    the ids of our recordings on it]."""
+    rec_credits = state.setdefault("recording_credits", {})
+    rel_credits = state.setdefault("release_credits", {})
+    todo = [rid for rid in state["releases"] if rid not in rel_credits]
+    print(f"  credits: {len(todo)} releases left "
           f"(~{len(todo) * RATE_LIMIT_SECONDS / 60:.0f} min)")
     for i, rid in enumerate(todo, 1):
         try:
-            rel = get(f"release/{rid}", {"inc": "recordings+artist-rels+recording-level-rels"})
+            rel = get(f"release/{rid}", {"inc": CREDITS_INC})
         except requests.HTTPError as e:
             if e.response.status_code != 404:
                 raise
             rel = {}  # release was deleted after the search found it
-        on_release = set(instruments_of(rel))
+        ours = []
         for medium in rel.get("media", []):
             for track in medium.get("tracks", []):
                 rec = track.get("recording", {})
                 if rec.get("id") in state["recordings"]:
-                    shared = instruments.get(rec["id"], [[], []])[1]
-                    instruments[rec["id"]] = [instruments_of(rec),
-                                              sorted(on_release | set(shared))]
-        done.append(rid)
+                    rec_credits[rec["id"]] = artist_rels(rec)
+                    ours.append(rec["id"])
+        rel_credits[rid] = [artist_rels(rel), release_labels(rel), ours]
         if i % SAVE_EVERY == 0 or i == len(todo):
             save_state(state)
-            print(f"  instruments: {i}/{len(todo)}  recordings with credits so far: "
-                  f"{sum(any(v) for v in instruments.values())}")
+            print(f"  credits: {i}/{len(todo)}  recordings with credits so far: "
+                  f"{sum(map(bool, rec_credits.values()))}")
+
+
+def song_credits(state):
+    """Per recording: (its own relationships, those of its releases, its labels)."""
+    shared = {}
+    for rels, labels, ours in state.get("release_credits", {}).values():
+        for rec_id in ours:
+            r, l = shared.setdefault(rec_id, ([], []))
+            r.extend(rels)
+            l.extend(labels)
+    own = state.get("recording_credits", {})
+    dedupe = lambda xs: [json.loads(x) for x in dict.fromkeys(map(json.dumps, xs))]
+    return {rid: (own.get(rid, []), *map(dedupe, shared.get(rid, ([], []))))
+            for rid in state["recordings"]}
+
+
+def role_names(own, shared, types):
+    """Names credited with one of `types`: on the recording, else on its releases."""
+    pick = lambda rels: sorted({name for t, _, name, _ in rels if t in types})
+    return pick(own) or pick(shared)
+
+
+# a fake release lookup: a producer on the release, a guitarist and a backing singer on
+# the recording, one label; the recording is on two releases with the same producer
+_rel = {"relations": [{"type": "producer", "artist": {"id": "p", "name": "Prod"}}],
+        "label-info": [{"label": {"id": "l", "name": "Columbia"}}, {"label": None}]}
+_rec = {"relations": [
+    {"type": "instrument", "attributes": ["guest", "guitar"], "artist": {"id": "g", "name": "Gtr"}},
+    {"type": "vocal", "attributes": ["background vocals"], "artist": {"id": "v", "name": "Voc"}}]}
+_entry = [artist_rels(_rel), release_labels(_rel), ["r"]]
+_own, _shared, _labels = song_credits({"recordings": {"r": []},
+                                       "recording_credits": {"r": artist_rels(_rec)},
+                                       "release_credits": {"x": _entry, "y": _entry}})["r"]
+assert instruments_of(_own) == ["guitar"]
+assert role_names(_own, _shared, ROLES["producers"]) == ["Prod"]  # falls back to release
+assert role_names(_own, _shared, ROLES["vocals"]) == ["Voc"]
+assert _shared == [["producer", "p", "Prod", []]] and _labels == [["l", "Columbia"]]  # deduped
+del _rel, _rec, _entry, _own, _shared, _labels
+
+
+def write_log(year, started, requests_before, completed):
+    """Append this run's collection metadata to collection_log.jsonl."""
+    state = load_state()
+    credits = song_credits(state)
+    with_credit = lambda test: sum(bool(test(*c)) for c in credits.values())
+    entry = {
+        "year": int(year), "started_utc": started,
+        "finished_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "completed": completed, "endpoint": API, "release_query": QUERY,
+        "credits_inc": CREDITS_INC, "rate_limit_s_per_request": RATE_LIMIT_SECONDS,
+        "requests_this_run": stats["requests"] - requests_before[0],
+        "retried_requests_this_run": stats["retries"] - requests_before[1],
+        "releases_found": len(state["releases"]),
+        "releases_reported_by_api": state.get("search_total"),
+        "recordings": len(state["recordings"]),
+        "artists_with_genre_lookup": len(state.get("artists", {})),
+        "releases_credit_lookup_done": len(state.get("release_credits", {})),
+        "recordings_with_any_credit": with_credit(lambda o, s, l: o or s or l),
+        **{f"recordings_with_{role}": with_credit(lambda o, s, l, t=types: role_names(o, s, t))
+           for role, types in ROLES.items()},
+        "recordings_with_labels": with_credit(lambda o, s, l: l),
+    }
+    with open("collection_log.jsonl", "a") as f:
+        f.write(json.dumps(entry) + "\n")
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true", help="search phase only")
-    ap.add_argument("--no-instruments", action="store_true",
-                    help="skip the slow instrument phase (the column is left empty "
-                         "for songs not looked up yet)")
+    ap.add_argument("--no-credits", action="store_true",
+                    help="skip the slow credits phase (the credit columns are left "
+                         "empty for songs not looked up yet)")
     ap.add_argument("--years", nargs=2, type=int, default=[1970, 1970],
                     metavar=("FIRST", "LAST"), help="crawl every year FIRST..LAST")
     args = ap.parse_args()
     for year in range(args.years[0], args.years[1] + 1):
         print(f"\n##### {year} #####")
         set_year(year)
-        crawl_year(args.quick, not args.no_instruments)
+        started = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        before, completed = (stats["requests"], stats["retries"]), False
+        try:
+            crawl_year(args.quick, not args.no_credits)
+            completed = True
+        finally:  # also log an interrupted run: its requests count toward the total
+            write_log(YEAR, started, before, completed)
 
 
-def crawl_year(quick, with_instruments=True):
+def crawl_year(quick, with_credits=True):
     state = load_state()
     if any(len(rec) < 7 for rec in state["recordings"].values()):
         # checkpoint from before genres/year/country were collected: redo the lookup phase
@@ -392,22 +484,36 @@ def crawl_year(quick, with_instruments=True):
     phase3_genres(state)
     genre_names = fetch_genre_names()
 
-    if with_instruments:
-        print("\nPhase 4: looking up instrument credits...")
-        phase4_instruments(state)
-    instruments = state.get("instruments", {})
+    if with_credits:
+        print("\nPhase 4: looking up credits (producers, musicians, singers, labels)...")
+        phase4_credits(state)
+    credits = song_credits(state)
 
     with open(f"songs_{YEAR}.csv", "w", encoding="utf-8") as f:
-        f.write("id,song,artist,genre,year,language,country,genres,instruments\n")
+        f.write("id,song,artist,genre,year,language,country,genres,instruments,"
+                + ",".join(ROLES) + ",labels\n")
         esc = lambda s: '"' + (s or "").replace('"', '""') + '"'
         for rid, rec in state["recordings"].items():
             genres = song_genres(rec, state["artists"], genre_names)
-            own, shared = instruments.get(rid, [[], []])
+            own, shared, labels = credits[rid]
+            people = [esc(";".join(role_names(own, shared, types))) for types in ROLES.values()]
             f.write(f"{rid},{esc(rec[0])},{esc(rec[1])},"
                     f"{esc(genres[0] if genres else '')},{rec[4]},{rec[6] or ''},"
                     f"{rec[5] or ''},{esc(';'.join(genres))},"
-                    f"{esc(';'.join(own or shared))}\n")
+                    f"{esc(';'.join(instruments_of(own) or instruments_of(shared)))},"
+                    f"{','.join(people)},{esc(';'.join(sorted({n for _, n in labels})))}\n")
     print(f"Wrote songs_{YEAR}.csv")
+
+    with open(f"credits_{YEAR}.csv", "w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["recording_id", "level", "type", "attributes", "mbid", "name"])
+        for rid, (own, shared, labels) in credits.items():
+            for level, rels in (("recording", own), ("release", shared)):
+                for t, mbid, name, attrs in rels:
+                    w.writerow([rid, level, t, ";".join(attrs), mbid, name])
+            for mbid, name in labels:
+                w.writerow([rid, "release", "label", "", mbid, name])
+    print(f"Wrote credits_{YEAR}.csv")
 
 
 if __name__ == "__main__":

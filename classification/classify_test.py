@@ -4,9 +4,13 @@ Quick test: how well can a song's genre be predicted from its lyrics?
 Compares three predictors on several label sets:
   guess   random guessing in proportion to how common each genre is
   counts  hand-made features: length, vocabulary richness, repeated lines, ...
-  words   TF-IDF word weights + logistic regression (learns which words mark a genre)
+  words   TF-IDF word weights + logistic regression (learns which words mark a genre);
+          word tokens and stop words as in the lyric graph (dataCleaner/text.py)
 
-All of an artist's songs are kept on the same side of each train/test split, so the
+Genre is the MusicBrainz 5-label scheme mb_label (rap dropped: 19 songs), with the
+Genius tag and the songs where both sources agree as checks.
+
+All of an artist's songs (credits like "X and The Y" count as X) are kept on the same side of each train/test split, so the
 model cannot score by recognising an artist. Scores are macro-F1 (1.0 = perfect; every
 genre counts equally, so always answering "rock" does not pay off).
 
@@ -23,7 +27,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from sklearn.dummy import DummyClassifier
-from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import confusion_matrix, f1_score
 from sklearn.model_selection import StratifiedGroupKFold, cross_val_predict
@@ -32,7 +35,8 @@ from sklearn.preprocessing import FunctionTransformer, StandardScaler
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "dataCleaner"))
-from clean import YEARS  # noqa: E402  (the year range is set in clean.py)
+from clean import YEARS, artist_main  # noqa: E402  (the year range is set in clean.py)
+from text import lyrics_vectorizer  # noqa: E402
 SEED = 0
 
 
@@ -57,7 +61,7 @@ def models():
         "guess": DummyClassifier(strategy="stratified", random_state=SEED),
         "counts": make_pipeline(FunctionTransformer(count_features), StandardScaler(),
                                 LogisticRegression(max_iter=2000, class_weight="balanced")),
-        "words": make_pipeline(TfidfVectorizer(sublinear_tf=True, min_df=2),
+        "words": make_pipeline(lyrics_vectorizer(min_df=2),
                                LogisticRegression(max_iter=2000, class_weight="balanced")),
     }
 
@@ -65,7 +69,7 @@ def models():
 def test(name, songs, label_col):
     """Cross-validated macro-F1 per model; returns the word model's confusion matrix."""
     songs = songs.dropna(subset=["lyrics", label_col])
-    X, y, artists = songs.lyrics.to_numpy(), songs[label_col].to_numpy(), songs.artist.to_numpy()
+    X, y, artists = songs.lyrics.to_numpy(), songs[label_col].to_numpy(), songs.artist.map(artist_main).to_numpy()
     folds = StratifiedGroupKFold(5, shuffle=True, random_state=SEED)
     scores = {}
     for model_name, model in models().items():
@@ -79,12 +83,13 @@ def test(name, songs, label_col):
 
 def main():
     matched = pd.read_csv(ROOT / f"songs_{YEARS}_lyrics.csv")
+    matched = matched[matched.mb_label != "rap"]
     genius = pd.read_csv(ROOT / f"genius_{YEARS}_clean.csv")
     genius = genius[genius.tag != "rap"]  # only 18 songs in 1970; hip hop starts ~1979
 
     print("MusicBrainz songs with lyrics")
-    test("  Genius tag", matched, "genius_tag")
     test("  MusicBrainz label", matched, "mb_label")
+    test("  Genius tag", matched[matched.genius_tag != "rap"], "genius_tag")
     test("  only where both agree", matched[matched.labels_agree == True], "label")  # noqa: E712
 
     print(f"\nAll Genius songs from {YEARS}")
