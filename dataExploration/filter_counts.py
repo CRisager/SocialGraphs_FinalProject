@@ -37,6 +37,8 @@ def musicbrainz():
                        ("genre maps to a Genius tag", s.mb_label.notna()),
                        ("with Genius lyrics", s.match.notna()),
                        ("lyrics + both labels", both),
+                       ("in the analysis (mb_label, no rap)",
+                        s.lyrics.notna() & s.mb_label.isin(["rock", "rb", "pop", "country"])),
                        ("both labels agree", s.labels_agree == True)]:  # noqa: E712
         t[name] = s[mask].groupby("year").size().reindex(t.index, fill_value=0)
     t.loc["total"] = t.sum()
@@ -74,6 +76,6 @@ if __name__ == "__main__":
     mb, ge = musicbrainz(), genius()
     # each step can only remove songs
     order = ["recordings first released that year", "songs after merging duplicates",
-             "with Genius lyrics", "lyrics + both labels", "both labels agree"]
+             "with Genius lyrics", "lyrics + both labels", "in the analysis (mb_label, no rap)"]
     assert mb.loc["total", order].is_monotonic_decreasing
     assert ge.loc["total"].is_monotonic_decreasing

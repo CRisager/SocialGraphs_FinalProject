@@ -36,8 +36,12 @@ from sklearn.preprocessing import FunctionTransformer, StandardScaler
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "dataCleaner"))
 from clean import YEARS, artist_main  # noqa: E402  (the year range is set in clean.py)
-from text import lyrics_vectorizer  # noqa: E402
+from text import lyrics_vectorizer, remove_words  # noqa: E402
 SEED = 0
+
+# Add words here to ignore them in both the word and count feature models.
+# This only filters in-memory copies; the CSV files are not changed.
+EXCLUDED_WORDS = set()
 
 
 def count_features(texts):
@@ -61,7 +65,7 @@ def models():
         "guess": DummyClassifier(strategy="stratified", random_state=SEED),
         "counts": make_pipeline(FunctionTransformer(count_features), StandardScaler(),
                                 LogisticRegression(max_iter=2000, class_weight="balanced")),
-        "words": make_pipeline(lyrics_vectorizer(min_df=2),
+        "words": make_pipeline(lyrics_vectorizer(excluded_words=EXCLUDED_WORDS, min_df=2),
                                LogisticRegression(max_iter=2000, class_weight="balanced")),
     }
 
@@ -69,7 +73,8 @@ def models():
 def test(name, songs, label_col):
     """Cross-validated macro-F1 per model; returns the word model's confusion matrix."""
     songs = songs.dropna(subset=["lyrics", label_col])
-    X, y, artists = songs.lyrics.to_numpy(), songs[label_col].to_numpy(), songs.artist.map(artist_main).to_numpy()
+    X = songs.lyrics.map(lambda text: remove_words(text, EXCLUDED_WORDS)).to_numpy()
+    y, artists = songs[label_col].to_numpy(), songs.artist.map(artist_main).to_numpy()
     folds = StratifiedGroupKFold(5, shuffle=True, random_state=SEED)
     scores = {}
     for model_name, model in models().items():

@@ -10,6 +10,7 @@ Dialect words such as "ain't" and "gonna" are kept: they may mark a genre.
 """
 
 from string import ascii_lowercase
+import re
 
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS, TfidfVectorizer
 
@@ -25,9 +26,20 @@ def normalise(text):
     return text.lower().replace("’", "'")  # Genius mixes ’ and '
 
 
-def lyrics_vectorizer(**kwargs):
+def remove_words(text, excluded_words=()):
+    """Return text with whole-word matches removed; the source CSV is unchanged."""
+    text = normalise(text)
+    words = {normalise(word).strip("'") for word in excluded_words if word}
+    for word in sorted(words, key=len, reverse=True):
+        text = re.sub(rf"\b{re.escape(word)}\b", " ", text)
+    return text
+
+
+def lyrics_vectorizer(excluded_words=(), **kwargs):
+    excluded_words = {normalise(word).strip("'") for word in excluded_words if word}
     return TfidfVectorizer(preprocessor=normalise, token_pattern=TOKEN_PATTERN,
-                           stop_words=STOP_WORDS, sublinear_tf=True, **kwargs)
+                           stop_words=sorted(set(STOP_WORDS) | excluded_words),
+                           sublinear_tf=True, **kwargs)
 
 
 assert list(lyrics_vectorizer().build_analyzer()("I’m lovin' you, I ain't 2 GONNA s-t-o-p")) \
