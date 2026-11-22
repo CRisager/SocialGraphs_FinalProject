@@ -230,3 +230,45 @@ def box_panels(groups, name=None, ylabel="", colors=None, xlabels=None, height=2
     if name:
         savefig(fig, name)
     return fig
+
+
+# diverging blue <-> red with a neutral grey midpoint (reference palette): blue = less
+# common than expected (lift < 1), red = more common (lift > 1)
+DIVERGING = ["#184f95", "#6da7ec", "#f0efec", "#ef8a89", "#b8302f"]
+
+
+def lift_heatmaps(lifts, n, name=None, min_count=5, lim=2.0, xlabels=None):
+    """Lift tables ({panel: families x labels}) as heatmaps on a log2 scale from
+    2^-lim to 2^lim. Cells with fewer than min_count songs (n, same shape) are left
+    blank: a lift from 1-4 songs is mostly noise. The lift is printed in each cell."""
+    cmap = mpl.colors.LinearSegmentedColormap.from_list("div", DIVERGING)
+    cmap.set_bad("white")
+    widths = [t.shape[1] for t in lifts.values()]
+    height = 0.9 + 0.17 * max(t.shape[0] for t in lifts.values())
+    fig, axes = plt.subplots(1, len(lifts), figsize=(PAGE_WIDTH, height), squeeze=False,
+                             layout="constrained", gridspec_kw={"width_ratios": widths})
+    for ax, (panel, t) in zip(axes[0], lifts.items()):
+        ok = (n[panel].reindex_like(t) >= min_count).to_numpy()
+        with np.errstate(divide="ignore"):
+            z = np.where(ok, np.log2(t.to_numpy(dtype=float)), np.nan)
+        im = ax.imshow(np.ma.masked_invalid(z), cmap=cmap, vmin=-lim, vmax=lim, aspect="auto")
+        for (i, j), v in np.ndenumerate(t.to_numpy(dtype=float)):
+            if ok[i, j]:
+                ax.text(j, i, f"{v:.1f}", ha="center", va="center", fontsize=5,
+                        color="white" if abs(z[i, j]) > 0.6 * lim else "#0b0b0b")
+        ax.set_xticks(range(t.shape[1]), t.columns, rotation=60, ha="right", fontsize=6)
+        ax.set_yticks(range(t.shape[0]), t.index, fontsize=6)
+        ax.set_title(panel, loc="left")
+        ax.set_xlabel((xlabels or {}).get(panel, ""))
+        ax.grid(False)
+        ax.tick_params(length=0)
+        for side in ax.spines.values():
+            side.set_visible(False)
+    axes[0][0].set_ylabel("instrument family")
+    ticks = np.arange(-lim, lim + 1)
+    cb = fig.colorbar(im, ax=axes[0].tolist(), shrink=0.8, pad=0.015, ticks=ticks,
+                      label="lift (log scale)")
+    cb.ax.set_yticklabels([f"{2 ** t:g}" for t in ticks])
+    if name:
+        savefig(fig, name)
+    return fig
