@@ -78,14 +78,20 @@ The year range is `FIRST_YEAR, LAST_YEAR` in [src/config.py](src/config.py).
 - **Cleaning** ([clean.py](src/clean.py)): recordings of the same song (country
   releases, mono/single versions, Part 1/2, credit variants) are merged, combining their
   genres, credits and countries. Genius non-song pages, non-English lyrics and version
-  pages (live, remaster, ...) are dropped. The primary `genre` is reduced to a
-  single-word core genre: the rightmost recognised one wins (`pop rock` -> `rock`); the
-  full list stays in `genres`.
+  pages (live, remaster, ...) are dropped. Each genre's MusicBrainz votes (tag counts,
+  read from the checkpoints) are summed over the merged recordings (`genre_votes`).
+  Every label is reduced to a core genre, the genre it is a kind of (`pop rock` -> `rock`,
+  `proto-punk` -> `punk`, `west coast hip hop` -> `hip hop`, `rhythm & blues` -> `r&b`),
+  and the votes are summed per core genre (`core_votes`). The primary `genre` is the
+  most-voted core genre; ties are drawn at random, seeded per song. Instruments are
+  grouped into families ([instruments.py](src/instruments.py)) as `instrument_families`.
 - **Matching** ([combine.py](src/combine.py)): exact title + artist first, then looser
-  rules, then fuzzy titles within the same artist. MusicBrainz genres are mapped onto
-  the Genius tags (pop, rock, rb, country, rap) as `mb_label`, which is the genre used
-  by the lyrics network and the classifier (rap dropped: too few songs); `label` is the
-  Genius tag where there is one, and `labels_agree` marks songs where both sources agree.
+  rules, then fuzzy titles within the same artist. The core-genre votes are summed per
+  coarse class: `genre_coarse` is the most-voted of rock, pop, rb, country, folk, blues,
+  jazz, reggae, electronic, rap and other; `mb_label` the most-voted of the Genius tags
+  (pop, rock, rb, country, rap) only, the genre used by the lyrics network and the
+  classifier (rap dropped: too few songs). `label` is the Genius tag where there is one,
+  and `labels_agree` marks songs where both sources agree.
 
 ## Tokenization ([text.py](src/text.py))
 

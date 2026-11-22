@@ -3,7 +3,8 @@
 import pandas as pd
 
 from . import clean, combine
-from .config import GENIUS_CLEAN, GENIUS_RAW, SONGS_LYRICS, YEAR_RANGE, musicbrainz_raw
+from .config import (GENIUS_CLEAN, GENIUS_RAW, SONGS_LYRICS, YEAR_RANGE,
+                     musicbrainz_checkpoint, musicbrainz_raw)
 
 
 def _stale():
@@ -13,8 +14,9 @@ def _stale():
     if not all(p.exists() for p in processed):
         return "processed files missing"
     built = min(p.stat().st_mtime for p in processed)
-    newer = [r.name for r in [GENIUS_RAW, *map(musicbrainz_raw, YEAR_RANGE)]
-             if r.exists() and r.stat().st_mtime > built]
+    # the checkpoints count too: clean.py reads the genre vote counts from them
+    raw = [GENIUS_RAW, *map(musicbrainz_raw, YEAR_RANGE), *map(musicbrainz_checkpoint, YEAR_RANGE)]
+    newer = [r.name for r in raw if r.exists() and r.stat().st_mtime > built]
     return f"newer raw files: {', '.join(newer)}" if newer else None
 
 
