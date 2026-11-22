@@ -37,10 +37,11 @@ def use_style():
 
 
 def savefig(fig, name):
-    """Save figures/<name>.pdf and figures/<name>.png."""
+    """Save figures/<name>.pdf and figures/<name>.png. The PDF gets no creation date,
+    so re-running the notebook only changes a PDF when the figure itself changes."""
     FIG_DIR.mkdir(exist_ok=True)
-    for ext in ("pdf", "png"):
-        fig.savefig(FIG_DIR / f"{name}.{ext}")
+    fig.savefig(FIG_DIR / f"{name}.pdf", metadata={"CreationDate": None})
+    fig.savefig(FIG_DIR / f"{name}.png")
 
 
 def ccdf(values):
