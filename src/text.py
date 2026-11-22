@@ -73,6 +73,37 @@ def tokens_for(lyrics, verbose=True):
     return pd.Series([cache[k].split() for k in keys], index=lyrics.index)
 
 
+# ---------------------------------------------------------------------------------------
+# Filler words (used by src/dataset.py when config.REMOVE_FILLER_WORDS is True)
+#
+# Vocables ("ooh", "la la la", "yeah") carry no theme but are frequent enough to become
+# a song's top TF-IDF words and to link unrelated songs. The tokenizer fragments are
+# what spaCy leaves of contractions ("gonna" -> gon + na, "gotta" -> got + ta,
+# "won't" -> wo, "ain't" -> ai; the "n't" part is not alphabetic and already dropped).
+# "ya" is a spelling of "you", which is a stop word. Single letters ("rock 'n' roll")
+# are dropped too. Real words that are part of a song's theme (baby, love, girl, yes,
+# alright, wow) are kept.
+#
+# The token cache (tokens.csv) is never changed: the words are removed when the analysis
+# loads its tokens, so turning REMOVE_FILLER_WORDS off restores the unfiltered tokens.
+# ---------------------------------------------------------------------------------------
+
+FILLER_WORDS = frozenset("""
+    oh ohh ohhh ooh oooh oo ooo oooo ah ahh aah aw ow
+    la lala na da dah doo dum dee ba bam bop sha shoo wah
+    hey yeah yea yeh yay uh huh mmm mm hmm whoa woah woo whoo hoo ay ayy ho ha hah yo
+""".split())
+TOKENIZER_FRAGMENTS = frozenset("gon na ta wo ai ya nt ll ve".split())
+
+
+def drop_fillers(tokens, words=FILLER_WORDS | TOKENIZER_FRAGMENTS, min_len=2):
+    """Tokens without the given filler words and without tokens shorter than min_len."""
+    return [t for t in tokens if len(t) >= min_len and t not in words]
+
+
+assert drop_fillers(["oh", "yeah", "baby", "gon", "na", "love", "n", "rock"]) == ["baby", "love", "rock"]
+
+
 def _identity(tokens):
     return tokens
 

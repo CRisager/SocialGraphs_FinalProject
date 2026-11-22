@@ -9,4 +9,7 @@ plotly
 requests
 scikit-learn
 scipy
+seaborn
 spacy
+vaderSentiment
+wordcloud

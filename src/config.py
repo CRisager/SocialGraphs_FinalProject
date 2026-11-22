@@ -22,6 +22,11 @@ YEAR_RANGE = range(FIRST_YEAR, LAST_YEAR + 1)
 
 SEED = 42
 
+# Drop vocables ("ooh", "yeah") and spaCy contraction fragments ("gon", "na") from the
+# lyrics tokens in the network analysis (lists in src/text.py). Set to False to undo:
+# the token cache is not changed, only the tokens the analysis loads.
+REMOVE_FILLER_WORDS = True
+
 # raw downloads
 GENIUS_RAW = RAW_DIR / "genius_songs_trimmed.csv"
 
