@@ -1,19 +1,25 @@
 """
 The three song graphs (Step 1). Songs are nodes; genre is NEVER used to build an edge.
 
-G_lyrics       TF-IDF vectors of the lyrics, edge weight = cosine similarity. The full
-               similarity matrix of the 3,234 songs with lyrics is 91% non-zero (4.8M
-               edges, since almost every pair shares some word), too big for networkx
-               and the null models, so every song keeps only its K_NEIGHBOURS most
-               similar songs as candidate edges (an edge is kept if either song chose
-               it). The disparity filter (Step 2) then decides which edges matter.
+G_lyrics       TF-IDF vectors of the lyrics, edge weight = cosine similarity between
+               every pair of songs. Almost every pair shares some word, so this graph
+               is 89% complete (4.6M edges): too big for networkx, but small as a
+               dense matrix (3,227 x 3,227), so it is kept as the matrix S and goes
+               into networkx only after the disparity filter (backbone.py). We first
+               cut it to each song's 20 most similar songs, but the disparity filter
+               then finds almost nothing to keep (see disparity_pvalues_dense).
 G_instruments  bipartite song-instrument family graph, projected onto the songs with
                Newman's hyperbolic weighting: a family shared by k songs adds
                1 / (k - 1) to each of their pairs, so a family on almost every song
                (guitar, drums) adds almost nothing and a rare shared one adds a lot.
-G_combined     the same projection of a bipartite graph whose feature nodes are the
-               song's instrument families ("inst:"), its release country ("country:")
-               and its TOP_WORDS highest-TF-IDF words ("word:") as lyrical themes.
+G_combined     songs linked through three feature types: instrument families
+               ("inst:"), release country ("country:") and the song's TOP_WORDS
+               highest-TF-IDF words ("word:") as lyrical themes. Each type is projected
+               on its own (hyperbolic), scaled to the same total edge weight, and the
+               three are added (balanced_projection). A single projection of all
+               features together let the words take 94% of the backbone's weight: a
+               word shared by just two songs gives that pair weight 1, while "guitar"
+               (on ~600 songs) gives 0.002, so the graph became a lyrics graph.
 """
 
 from collections import Counter
@@ -23,7 +29,6 @@ import numpy as np
 
 from .text import lyrics_vectorizer
 
-K_NEIGHBOURS = 20
 TOP_WORDS = 10
 TFIDF_PARAMS = dict(min_df=2, max_df=0.5)  # sublinear_tf=True is set in lyrics_vectorizer
 METADATA = ["song", "artist", "year", "country", "genre_eval", "genre"]
@@ -41,25 +46,41 @@ def tfidf(tokens):
     return X, vec.get_feature_names_out()
 
 
-def lyrics_graph(X, ids, k=K_NEIGHBOURS):
-    """Song graph weighted by cosine similarity. With k, each song keeps its k most
-    similar songs (union over both endpoints); k=None keeps every non-zero pair.
-    Self-loops and zero similarities are never edges."""
+def lyrics_similarity(X):
+    """Dense cosine-similarity matrix of the songs, with a zero diagonal (no
+    self-loops). A zero entry means no shared word, i.e. no edge."""
     S = (X @ X.T).toarray()
     np.fill_diagonal(S, 0)
+    return S
+
+
+def lyrics_graph(S, ids):
+    """networkx graph of every non-zero pair in S. Only for small subsets: the full
+    lyrics graph is kept as the matrix."""
     G = nx.Graph()
     G.add_nodes_from(ids)
-    if k is None:
-        i, j = np.nonzero(np.triu(S, 1))
-    else:
-        k = min(k, len(ids) - 1)
-        nbrs = np.argpartition(-S, k - 1, axis=1)[:, :k]  # k largest per row, unordered
-        i = np.repeat(np.arange(len(ids)), k)
-        j = nbrs.ravel()
-        keep = S[i, j] > 0
-        i, j = i[keep], j[keep]
+    i, j = np.nonzero(np.triu(S, 1))
     G.add_weighted_edges_from((ids[a], ids[b], float(S[a, b])) for a, b in zip(i, j))
     return G
+
+
+def dense_summary(S):
+    """summary() for a graph held as a dense weight matrix."""
+    from scipy.sparse import csr_matrix
+    from scipy.sparse.csgraph import connected_components
+    n = len(S)
+    n_comp, labels = connected_components(csr_matrix(S > 0), directed=False)
+    lcc = np.bincount(labels).max()
+    edges = int(np.count_nonzero(np.triu(S, 1)))
+    return {"nodes": n, "edges": edges, "density": edges / (n * (n - 1) / 2),
+            "components": int(n_comp), "isolated": int(((S > 0).sum(axis=1) == 0).sum()),
+            "lcc_nodes": int(lcc), "lcc_share": lcc / n}
+
+
+def upper_weights(S):
+    """The non-zero weights of a dense matrix, one per edge."""
+    w = S[np.triu_indices(len(S), 1)]
+    return w[w > 0]
 
 
 def top_words(X, terms, n=TOP_WORDS):
@@ -110,6 +131,52 @@ def feature_weight_shares(B):
     return {t: v / s for t, v in total.most_common()}
 
 
+def edge_feature_shares(B, G):
+    """Share of the edge weight of G (a projection of B, or a backbone of one) that
+    comes from each feature type: each edge's weight is split over its shared
+    features, 1 / (deg(f) - 1) each."""
+    total = Counter()
+    for u, v in G.edges:
+        for f in set(B[u]) & set(B[v]):
+            total[f.split(":", 1)[0]] += 1 / (B.degree(f) - 1)
+    s = sum(total.values())
+    return {t: x / s for t, x in total.most_common()}
+
+
+FEATURE_TYPES = ("inst", "country", "word")
+
+
+def balanced_projection(features, types=FEATURE_TYPES):
+    """Song graph from {song: ['type:name', ...]} in which every feature type has the
+    same total edge weight. Each type gets its own bipartite graph and hyperbolic
+    projection; the projection's weights are divided by their sum, so each type
+    contributes 1 in total, and the types are added edge by edge. Each edge also keeps
+    its per-type part as 'w_<type>' (for type_shares). Songs keep their node even if
+    no type links them to anyone."""
+    G = nx.Graph()
+    G.add_nodes_from(features)
+    for t in types:
+        Bt = bipartite_graph({s: [f for f in fs if f.split(":", 1)[0] == t]
+                              for s, fs in features.items()})
+        Pt = project(Bt)
+        total = Pt.size(weight="weight")
+        if total == 0:
+            continue
+        for u, v, w in Pt.edges(data="weight"):
+            d = G.get_edge_data(u, v) or {}
+            G.add_edge(u, v, **{**d, "weight": d.get("weight", 0.0) + w / total,
+                                f"w_{t}": w / total})
+    return G
+
+
+def type_shares(G, types=FEATURE_TYPES):
+    """Share of G's edge weight from each feature type (G from balanced_projection, or
+    a backbone of it)."""
+    total = {t: sum(d.get(f"w_{t}", 0.0) for *_, d in G.edges(data=True)) for t in types}
+    s = sum(total.values())
+    return {t: v / s for t, v in total.items()}
+
+
 def instrument_features(songs):
     """{song: ['inst:<family>', ...]} for the songs with instrument data."""
     fam = songs.instrument_families.dropna()
@@ -155,3 +222,20 @@ _P = project(_B)
 assert set(_P.nodes) == {"a", "b", "c"}
 assert np.isclose(_P["a"]["b"]["weight"], 1 + 1 / 2) and np.isclose(_P["a"]["c"]["weight"], 1 / 2)
 assert feature_weight_shares(_B) == {"x": 1.0}  # y:only has degree 1, links nobody
+
+_S = np.array([[0, .5, 0], [.5, 0, 0], [0, 0, 0]])
+assert dense_summary(_S) == {"nodes": 3, "edges": 1, "density": 1 / 3, "components": 2,
+                             "isolated": 1, "lcc_nodes": 2, "lcc_share": 2 / 3}
+# on the full projection both share functions agree
+_B2 = bipartite_graph({"a": ["x:1", "y:1"], "b": ["x:1", "y:1"], "c": ["x:1"]})
+assert all(np.isclose(edge_feature_shares(_B2, project(_B2))[t], v)
+           for t, v in feature_weight_shares(_B2).items())
+
+# balanced projection: each type contributes the same total weight, per-type parts add up
+_F = {"a": ["inst:x", "word:r", "country:US"], "b": ["inst:x", "word:r", "country:US"],
+      "c": ["inst:x", "country:US"], "d": ["country:GB"]}
+_G3 = balanced_projection(_F)
+assert all(np.isclose(v, 1 / 3) for v in type_shares(_G3).values())
+assert all(np.isclose(d["weight"], sum(d.get(f"w_{t}", 0) for t in FEATURE_TYPES))
+           for *_, d in _G3.edges(data=True))
+assert np.isclose(_G3["a"]["b"]["w_word"], 1.0) and "d" in _G3 and _G3.degree("d") == 0
