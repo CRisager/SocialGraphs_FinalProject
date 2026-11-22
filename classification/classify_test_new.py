@@ -41,7 +41,7 @@ SEED = 0
 
 # Add words here to ignore them in both the word and count feature models.
 # This only filters in-memory copies; the CSV files are not changed.
-EXCLUDED_WORDS = {"love","baby","yeah"}
+EXCLUDED_WORDS = {"love","baby","yeah", "ooh", "oh", "la"}
 
 
 def count_features(texts):
@@ -73,7 +73,9 @@ def models():
 def test(name, songs, label_col):
     """Cross-validated macro-F1 per model; returns the word model's confusion matrix."""
     songs = songs.dropna(subset=["lyrics", label_col])
-    X = songs.lyrics.map(lambda text: remove_words(text, EXCLUDED_WORDS)).to_numpy()
+    songs = songs.assign(lyrics=songs.lyrics.map(lambda text: remove_words(text, EXCLUDED_WORDS)))
+    songs = songs[songs.lyrics.str.split().str.len() > 0]  # nothing left after removing words
+    X = songs.lyrics.to_numpy()
     y, artists = songs[label_col].to_numpy(), songs.artist.map(artist_main).to_numpy()
     folds = StratifiedGroupKFold(5, shuffle=True, random_state=SEED)
     scores = {}
