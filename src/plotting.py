@@ -128,3 +128,29 @@ def heatmap_panels(tables, name=None, xlabel="", vmax=100):
     if name:
         savefig(fig, name)
     return fig
+
+
+def null_panels(nulls, reals, name=None, xlabel="modularity M"):
+    """One histogram per graph of the null-model values, with the real value as a
+    vertical line ({graph: array}, {graph: float})."""
+    fig, axes = plt.subplots(1, len(nulls), figsize=(PAGE_WIDTH, 1.9), squeeze=False)
+    for ax, (graph, null) in zip(axes[0], nulls.items()):
+        color = GRAPH_COLORS.get(graph, INK)
+        null = np.asarray(null)
+        ax.hist(null, bins=15, color=color, alpha=0.55, linewidth=0)
+        ax.axvline(reals[graph], color=color, linewidth=1.6)
+        # direct labels instead of a legend: the real line, and the null distribution
+        ax.annotate(f"real\nM = {reals[graph]:.3f}", (reals[graph], 0.97),
+                    xycoords=("data", "axes fraction"), xytext=(-4, 0),
+                    textcoords="offset points", ha="right", va="top", fontsize=6)
+        ax.annotate(f"{len(null)} null models\n{null.mean():.3f} ± {null.std(ddof=1):.3f}",
+                    (null.max(), 0.97), xycoords=("data", "axes fraction"), xytext=(4, 0),
+                    textcoords="offset points", ha="left", va="top", fontsize=6, color=INK)
+        ax.set_title(graph, loc="left")
+        ax.set_xlabel(xlabel)
+        ax.grid(axis="x", visible=False)
+    axes[0][0].set_ylabel("null models")
+    fig.tight_layout()
+    if name:
+        savefig(fig, name)
+    return fig
