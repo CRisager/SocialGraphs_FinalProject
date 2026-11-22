@@ -174,3 +174,59 @@ def null_panels(nulls, reals, name=None, xlabel="modularity M"):
     """One histogram per graph of the null-model M values, with the real M as a
     vertical line ({graph: array}, {graph: float})."""
     return null_grid({xlabel: nulls}, {xlabel: reals}, name, symbol="M")
+
+
+def wordcloud_grid(scores, name=None, color=INK, n_words=40, ncols=4, titles=None, seed=0):
+    """One word cloud per community from {community: Series word -> score}; word size
+    follows the score. All words have the graph's colour: colour carries no extra
+    meaning here, so varying it would only suggest one."""
+    from wordcloud import WordCloud
+    keys = list(scores)
+    nrows = int(np.ceil(len(keys) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(PAGE_WIDTH, 1.45 * nrows), squeeze=False)
+    for ax in axes.flat:
+        ax.axis("off")
+    for ax, c in zip(axes.flat, keys):
+        freq = scores[c][scores[c] > 0].nlargest(n_words).to_dict()
+        wc = WordCloud(width=640, height=400, background_color="white", prefer_horizontal=1.0,
+                       color_func=lambda *a, **k: color, random_state=seed,
+                       margin=4).generate_from_frequencies(freq)
+        ax.imshow(wc, interpolation="bilinear")
+        ax.set_title((titles or {}).get(c, str(c)), loc="left", fontsize=6.5)
+    fig.tight_layout(h_pad=1.6, w_pad=0.4)
+    if name:
+        savefig(fig, name)
+    return fig
+
+
+def box_panels(groups, name=None, ylabel="", colors=None, xlabels=None, height=2.0):
+    """Box plots side by side: groups = {panel: {box label: values}}. Panel widths
+    follow the number of boxes. A dashed line marks each panel's overall median, so
+    boxes can be read as above or below it. Outliers are not drawn (the whiskers cover
+    1.5 IQR); they would add ink but no comparison."""
+    widths = [max(len(g), 3) for g in groups.values()]
+    fig, axes = plt.subplots(1, len(groups), figsize=(PAGE_WIDTH, height), squeeze=False,
+                             sharey=True, gridspec_kw={"width_ratios": widths})
+    for ax, (panel, g) in zip(axes[0], groups.items()):
+        color = (colors or {}).get(panel, GRAPH_COLORS.get(panel, INK))
+        data = [np.asarray(v)[~np.isnan(np.asarray(v, dtype=float))] for v in g.values()]
+        bp = ax.boxplot(data, widths=0.6, patch_artist=True, showfliers=False,
+                        medianprops={"color": "#0b0b0b", "linewidth": 1.0},
+                        whiskerprops={"color": INK, "linewidth": 0.6},
+                        capprops={"color": INK, "linewidth": 0.6},
+                        boxprops={"linewidth": 0})
+        for box in bp["boxes"]:
+            box.set_facecolor(color)
+            box.set_alpha(0.6)
+        ax.axhline(np.median(np.concatenate(data)), color=INK, linewidth=0.6, linestyle="--")
+        ax.set_xticks(range(1, len(g) + 1), list(g), fontsize=6,
+                      rotation=0 if max(len(str(k)) for k in g) <= 3 else 45,
+                      ha="center" if max(len(str(k)) for k in g) <= 3 else "right")
+        ax.set_title(panel, loc="left")
+        ax.set_xlabel((xlabels or {}).get(panel, ""))
+        ax.grid(axis="x", visible=False)
+    axes[0][0].set_ylabel(ylabel)
+    fig.tight_layout()
+    if name:
+        savefig(fig, name)
+    return fig
