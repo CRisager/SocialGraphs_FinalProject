@@ -92,3 +92,39 @@ def size_panels(sizes, name=None, ylabel="songs"):
     if name:
         savefig(fig, name)
     return fig
+
+
+# sequential blue ramp of the reference palette (light = near zero), for heatmaps
+BLUE_RAMP = ["#f4f8fd", "#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95",
+             "#0d366b"]
+
+
+def heatmap_panels(tables, name=None, xlabel="", vmax=100):
+    """Row-normalised community x label tables ({graph: DataFrame of %}) as heatmap
+    panels side by side, with the percentage printed in each cell. One shared colour
+    scale (0-vmax %), so the panels can be compared."""
+    cmap = mpl.colors.LinearSegmentedColormap.from_list("blues", BLUE_RAMP)
+    widths = [max(t.shape[1], 3) for t in tables.values()]
+    height = 0.9 + 0.17 * max(t.shape[0] for t in tables.values())
+    fig, axes = plt.subplots(1, len(tables), figsize=(PAGE_WIDTH, height), squeeze=False,
+                             layout="constrained",
+                             gridspec_kw={"width_ratios": widths})
+    for ax, (graph, t) in zip(axes[0], tables.items()):
+        im = ax.imshow(t.to_numpy(), cmap=cmap, vmin=0, vmax=vmax, aspect="auto")
+        for (i, j), v in np.ndenumerate(t.to_numpy()):
+            if v >= 0.5:
+                ax.text(j, i, f"{v:.0f}", ha="center", va="center", fontsize=5,
+                        color="white" if v > 0.55 * vmax else "#0b0b0b")
+        ax.set_xticks(range(t.shape[1]), t.columns, rotation=60, ha="right", fontsize=6)
+        ax.set_yticks(range(t.shape[0]), t.index, fontsize=6)
+        ax.set_title(graph, loc="left")
+        ax.set_xlabel(xlabel)
+        ax.grid(False)
+        ax.tick_params(length=0)
+        for side in ax.spines.values():
+            side.set_visible(False)
+    axes[0][0].set_ylabel("community")
+    fig.colorbar(im, ax=axes[0].tolist(), shrink=0.8, pad=0.015, label="% of community")
+    if name:
+        savefig(fig, name)
+    return fig

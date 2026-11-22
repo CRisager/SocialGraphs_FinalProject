@@ -15,11 +15,14 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 
+from .backbone import canonical
+
 
 def louvain(G, seed, weight="weight", resolution=1.0):
-    """Louvain communities of G as a list of sets, largest first."""
-    comms = nx.community.louvain_communities(G, weight=weight, resolution=resolution,
-                                             seed=seed)
+    """Louvain communities of G as a list of sets, largest first. G is put in canonical
+    (sorted) order first, so a seed gives the same partition in every run."""
+    comms = nx.community.louvain_communities(canonical(G), weight=weight,
+                                             resolution=resolution, seed=seed)
     return sorted(comms, key=lambda c: (-len(c), min(map(str, c))))
 
 

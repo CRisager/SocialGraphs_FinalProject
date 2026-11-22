@@ -76,9 +76,21 @@ def backbone(G, alpha=0.05):
     return B
 
 
+def canonical(G):
+    """Copy of G with nodes and edges inserted in sorted order. Louvain and the edge
+    swaps visit nodes in insertion order, and that order otherwise depends on Python's
+    per-process string hashing (the projections iterate over sets), so the same SEED
+    gave different partitions in different runs. Sorting makes runs reproducible."""
+    H = nx.Graph()
+    H.add_nodes_from(sorted(G.nodes(data=True), key=lambda nd: str(nd[0])))
+    edges = ((u, v, d) if str(u) <= str(v) else (v, u, d) for u, v, d in G.edges(data=True))
+    H.add_edges_from(sorted(edges, key=lambda e: (str(e[0]), str(e[1]))))
+    return H
+
+
 def largest_component(G):
-    """The largest connected component, as an independent graph."""
-    return G.subgraph(max(nx.connected_components(G), key=len)).copy()
+    """The largest connected component, as an independent graph in canonical order."""
+    return canonical(G.subgraph(max(nx.connected_components(G), key=len)))
 
 
 # Toy check: a centre with one strong edge (w = 10) and ten weak ones (w = 1); every
