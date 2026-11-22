@@ -146,26 +146,30 @@ def edge_feature_shares(B, G):
 FEATURE_TYPES = ("inst", "country", "word")
 
 
-def balanced_projection(features, types=FEATURE_TYPES):
+def balanced_projection(features, types=FEATURE_TYPES, type_weights=None):
     """Song graph from {song: ['type:name', ...]} in which every feature type has the
     same total edge weight. Each type gets its own bipartite graph and hyperbolic
     projection; the projection's weights are divided by their sum, so each type
     contributes 1 in total, and the types are added edge by edge. Each edge also keeps
     its per-type part as 'w_<type>' (for type_shares). Songs keep their node even if
-    no type links them to anyone."""
+    no type links them to anyone.
+    type_weights ({type: factor}, default 1 for every type) scales a type's total; the
+    Step 6C sensitivity check uses it to down-weight country (0 leaves the type out)."""
+    type_weights = type_weights or {}
     G = nx.Graph()
     G.add_nodes_from(features)
     for t in types:
+        factor = type_weights.get(t, 1.0)
         Bt = bipartite_graph({s: [f for f in fs if f.split(":", 1)[0] == t]
                               for s, fs in features.items()})
         Pt = project(Bt)
         total = Pt.size(weight="weight")
-        if total == 0:
+        if total == 0 or factor == 0:
             continue
         for u, v, w in Pt.edges(data="weight"):
             d = G.get_edge_data(u, v) or {}
-            G.add_edge(u, v, **{**d, "weight": d.get("weight", 0.0) + w / total,
-                                f"w_{t}": w / total})
+            part = factor * w / total
+            G.add_edge(u, v, **{**d, "weight": d.get("weight", 0.0) + part, f"w_{t}": part})
     return G
 
 
