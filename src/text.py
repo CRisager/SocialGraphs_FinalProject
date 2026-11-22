@@ -20,6 +20,7 @@ Setup:
 """
 
 import hashlib
+import re
 
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -108,6 +109,42 @@ def _identity(tokens):
     return tokens
 
 
-def lyrics_vectorizer(**kwargs):
-    """TF-IDF over pre-tokenized lyrics (lists of tokens from tokens_for)."""
-    return TfidfVectorizer(analyzer=_identity, sublinear_tf=True, **kwargs)
+class _Without:
+    """Analyzer that drops excluded words from a token list (a class, not a lambda, so
+    a fitted vectorizer can still be pickled and cloned by scikit-learn)."""
+
+    def __init__(self, words):
+        self.words = frozenset(words)
+
+    def __call__(self, tokens):
+        return [t for t in tokens if t not in self.words]
+
+
+def _normalise_word(word):
+    return str(word).lower().replace("’", "'").strip("'")
+
+
+def lyrics_vectorizer(excluded_words=(), **kwargs):
+    """TF-IDF over pre-tokenized lyrics (lists of tokens from tokens_for).
+    excluded_words (Jonathan's option, from the jonathan branch): extra words to leave
+    out, e.g. to test whether a result rests on a few very common words. The tokens
+    are used as they are, so sklearn's stop_words would be ignored; the words are
+    dropped by the analyzer instead."""
+    words = {_normalise_word(w) for w in excluded_words if w}
+    analyzer = _Without(words) if words else _identity
+    return TfidfVectorizer(analyzer=analyzer, sublinear_tf=True, **kwargs)
+
+
+def remove_words(text, excluded_words=()):
+    """Raw lyrics text with whole-word matches of excluded_words removed (for models
+    that read the raw text, like the classifier's count features). Jonathan's function
+    from the jonathan branch; the source CSV is never changed."""
+    text = str(text).lower().replace("’", "'")
+    for word in sorted({_normalise_word(w) for w in excluded_words if w}, key=len, reverse=True):
+        text = re.sub(rf"\b{re.escape(word)}\b", " ", text)
+    return text
+
+
+assert lyrics_vectorizer(excluded_words={"Baby"}).build_analyzer()(["baby", "love"]) == ["love"]
+assert lyrics_vectorizer().build_analyzer()(["baby", "love"]) == ["baby", "love"]
+assert remove_words("Oh baby, my BABY’s love", {"baby"}).split() == ["oh", ",", "my", "'s", "love"]

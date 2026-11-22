@@ -10,5 +10,6 @@ data/
 figures/*.html
 
 __pycache__/
+*.pyc
 .venv/
 .ipynb_checkpoints/

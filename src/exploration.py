@@ -48,6 +48,10 @@ def musicbrainz_funnel(songs):
                        ("genre maps to a Genius tag", songs.mb_label.notna()),
                        ("with Genius lyrics", songs.match.notna()),
                        ("lyrics + both labels", both),
+                       # Jonathan's row (jonathan branch): the songs the lyrics network
+                       # and the classifier use
+                       ("in the analysis (mb_label, no rap)",
+                        songs.lyrics.notna() & songs.mb_label.isin(["rock", "rb", "pop", "country"])),
                        ("both labels agree", songs.labels_agree == True)]:  # noqa: E712
         t[name] = songs[mask].groupby("year").size().reindex(t.index, fill_value=0)
     t.loc["total"] = t.sum()

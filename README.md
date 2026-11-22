@@ -1,32 +1,50 @@
 # SocialGraphs_FinalProject
 
 English-language songs first released 1970–1980: MusicBrainz metadata, genres and
-credits, matched to Genius lyrics. We ask whether songs with similar lyrics or shared
-genres form communities, and whether a song's genre can be predicted from its lyrics.
+credits, matched to Genius lyrics.
 
-**Start with [main.ipynb](main.ipynb).** Run it top to bottom; it shows every key result.
-[Documentation.ipynb](Documentation.ipynb) describes the planned methods and why.
+**Research question.** To what extent can songs from 1970–1975 be grouped into
+meaningful clusters based on lyrical themes, country and instrumentation, and how do
+these clusters correspond to established musical genres?
+
+- [notebooks/analysis.ipynb](notebooks/analysis.ipynb): the network analysis for the
+  research question (three song graphs, backbones, communities, null models), step by
+  step. It is also our explainer notebook.
+- [Documentation.ipynb](Documentation.ipynb): the methods table and every data
+  decision with its reasoning (genre labels, country, instrument families, which songs
+  enter which graph).
+- [main.ipynb](main.ipynb): the data overview, the genre network, the earlier
+  lyrics network and the genre classifier, run top to bottom.
 
 ## Project layout
 
 ```
-main.ipynb               results: data overview, genre network, lyrics network, classification
-Documentation.ipynb      planned methods, step by step
+notebooks/analysis.ipynb the network analysis for the research question (explainer notebook)
+Documentation.ipynb      methods table and data decisions, with reasons
+main.ipynb               data overview, genre network, lyrics network, classification
 src/
-  config.py              year range, file paths, plot colours  <- change settings here
+  config.py              year range, file paths, SEED, REMOVE_FILLER_WORDS  <- change settings here
   download/
     musicbrainz.py       crawl MusicBrainz            -> data/raw/songs_<year>.csv, credits_<year>.csv
+    musicbrainz_dump.py  fill in the credits from a MusicBrainz database dump (no API)
     genius.py            Genius lyrics from Kaggle    -> data/raw/genius_songs_trimmed.csv
     discogs.py           Discogs credits via the API  -> data/raw/discogs_<year>.csv, discogs_credits_<year>.csv
     discogs_dump.py      the same from a Discogs data dump (no API)
-  clean.py               deduplicate both sources     -> data/processed/*_clean.csv
+  clean.py               deduplicate both sources, genre votes -> data/processed/*_clean.csv
+  instruments.py         instrument names -> 14 instrument families
   combine.py             attach lyrics + labels       -> data/processed/songs_<years>_lyrics.csv
   data.py                load_data(): loads processed files, rebuilds them if missing
-  text.py                spaCy tokenization of the lyrics (cached in data/processed/tokens.csv)
+  text.py                spaCy tokenization of the lyrics (cached in data/processed/tokens.csv),
+                         filler words, TF-IDF vectorizer
+  dataset.py             the 1970-1975 song table of the network analysis (genre_eval, tokens)
+  graphs.py              G_lyrics, G_instruments, G_combined (TF-IDF, hyperbolic projections)
+  backbone.py            disparity filter
+  plotting.py            PNAS-sized figure style, PDF + PNG saving
   exploration.py         data overview tables and plots, credit coverage
   genre_network.py       songs linked by shared genres, communities
   lyrics_network.py      songs/artists linked by similar lyrics, communities vs genres, null models
-  classification.py      predict genre from lyrics
+                         (--balanced: equal songs per genre)
+  classification.py      predict genre from lyrics (--excluded: leave words out)
 data/                    (not in git) raw/ downloads and processed/ outputs
 figures/                 plots written by the analyses (the HTML ones are not in git)
 results/                 result tables and collection_log.jsonl (one line per crawler run)
@@ -48,6 +66,7 @@ from the repository root:
 
 ```bash
 python -m src.download.musicbrainz     # resumable, see below
+python -m src.download.musicbrainz_dump <mbdump folder> --years 1970 1980  # credits from a dump, then rerun the line above
 python -m src.download.genius          # needs at least 9 GB free disk space
 python -m src.download.discogs --year 1970   # optional; needs DISCOGS_TOKEN
 python -m src.clean                    # -> data/processed/songs_1970-1980_clean.csv, genius_1970-1980_clean.csv
@@ -55,7 +74,9 @@ python -m src.combine                  # -> data/processed/songs_1970-1980_lyric
 python -m src.exploration              # tables + figures/overview.png, figures/lyrics.png
 python -m src.genre_network            # figures/genre_network.html
 python -m src.lyrics_network           # ~20 min; results/lyrics_network_*.csv + figures
+python -m src.lyrics_network --balanced   # ~10 min; same on samples with equal songs per genre
 python -m src.classification           # macro-F1 scores + confusion matrices
+python -m src.classification --excluded love baby yeah   # the same without these words
 ```
 
 The year range is `FIRST_YEAR, LAST_YEAR` in [src/config.py](src/config.py).
@@ -68,7 +89,10 @@ The year range is `FIRST_YEAR, LAST_YEAR` in [src/config.py](src/config.py).
   `musicians`, `vocals` and record `labels` (empty where MusicBrainz has none). Every
   single credit, with MusicBrainz ids for building a collaboration graph, goes to
   `credits_<year>.csv`. The credits phase needs one request per release, about 5.5 hours
-  for 1970–1980; add `--no-credits` to skip it. The crawler may get timed out if run too
+  for 1970–1980; add `--no-credits` to skip it. Instead,
+  [musicbrainz_dump.py](src/download/musicbrainz_dump.py) can fill the credits in
+  from a MusicBrainz database dump, after which the crawler only writes the CSVs (this is
+  how our credits were made). The crawler may get timed out if run too
   often, as it respects the rate limits. Each run appends its endpoint, query, dates,
   request count and resulting counts to `results/collection_log.jsonl` for the Methods
   section.
@@ -109,3 +133,14 @@ must appear in at least two distinct songs, counting each song once. Only spaCy'
 tokenizer runs (no tagger, parser or NER): `is_alpha` and `is_stop` are properties of the
 word itself, so the tokens are identical to the full pipeline's, at ~400 songs/s.
 Tokens are cached in `data/processed/tokens.csv`, keyed by a hash of the lyrics.
+
+The network analysis also drops filler words: vocables ("ooh", "la", "yeah") and what
+spaCy leaves of contractions ("gonna" -> gon + na). Set `REMOVE_FILLER_WORDS = False` in
+[src/config.py](src/config.py) to keep them; the cache is not changed. The classifier
+and the lyrics network can leave out extra words with `excluded_words`.
+
+## Environment note
+
+If numpy crashes on Windows with error `0xc06d007f` (MKL with llvm-openmp in conda),
+`src/__init__.py` already sets `MKL_THREADING_LAYER=TBB`, which avoids it. A lasting
+fix is `conda install "libblas=*=*openblas"` in the environment.

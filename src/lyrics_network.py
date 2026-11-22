@@ -38,8 +38,15 @@ figure); figures/lyrics_genre_lift.png shows each genre's lift for the k = 10 gr
 
 Takes about 20 minutes, so main.ipynb shows the saved results unless asked to rerun.
 
+Balanced check (Jonathan, from the jonathan branch; about 10 minutes): rock is about
+half of the songs, so every number above is dominated by it. run_balanced() repeats
+the song graphs (k = 10, and mutual k = 20) on N_DRAWS random samples with the same
+number of songs per genre (all of the smallest genre), so chance is 25% for every
+genre; results go to results/lyrics_network_balanced.csv.
+
 Usage:
-    python -m src.lyrics_network
+    python -m src.lyrics_network              # everything except the balanced check
+    python -m src.lyrics_network --balanced   # only the balanced check
 """
 
 import html
@@ -60,6 +67,8 @@ from .data import load_data
 from .text import lyrics_vectorizer, tokens_for
 
 RESULTS = RESULTS_DIR / "lyrics_network_results.csv"
+BALANCED = RESULTS_DIR / "lyrics_network_balanced.csv"
+N_DRAWS = 5
 COMMUNITIES = RESULTS_DIR / "lyrics_network_communities.csv"
 NETWORK_FIG = FIG_DIR / "lyrics_network.png"
 LIFT_FIG = FIG_DIR / "lyrics_genre_lift.png"
@@ -375,7 +384,48 @@ def load_results():
     return pd.read_csv(RESULTS), pd.read_csv(COMMUNITIES, index_col="community")
 
 
+def balanced_sample(songs, seed):
+    """The same number of random songs from every genre: as many as the smallest has."""
+    n = songs.mb_label.value_counts().min()
+    return songs.groupby("mb_label").sample(n, random_state=seed).reset_index(drop=True)
+
+
+assert (balanced_sample(pd.DataFrame({"mb_label": list("aaab"), "x": range(4)}), 0)
+        .mb_label.value_counts().to_dict() == {"a": 1, "b": 1})
+
+
+def run_balanced(songs, verbose=True):
+    """Jonathan's balanced check (module docstring). Saves and returns the table."""
+    songs = prepare(songs)
+    rows = []
+    for draw_no in range(N_DRAWS):
+        sample = balanced_sample(songs, draw_no)
+        if verbose:
+            print(f"\n##### draw {draw_no + 1} of {N_DRAWS}: {len(sample)} songs, "
+                  f"{sample.mb_label.value_counts().to_dict()}")
+        sim = similarity(lyrics_vectorizer(min_df=2).fit_transform(sample.tokens),
+                         sample.artist_id)
+        nbrs = neighbours(sim, 20)
+        for k, mutual in ((10, False), (20, True)):
+            row = analyse("songs, balanced", knn_graph(sim, nbrs, k, mutual),
+                          sample.mb_label, k, mutual, verbose)[0]
+            rows.append({"draw": draw_no, **row})
+    results = pd.DataFrame(rows).round(4)
+    BALANCED.parent.mkdir(parents=True, exist_ok=True)
+    results.to_csv(BALANCED, index=False)
+    if verbose:
+        cols = ["same_genre", "same_genre_null", "rewired_same_genre",
+                *[f"{g}_lift" for g in LABELS], "louvain_modularity", "rewired_modularity",
+                "nmi", "nmi_null", "rewired_nmi"]
+        summary = results.groupby(["k", "mutual"])[cols].agg(["mean", "std"]).round(3).T
+        print(f"\nMean and sd over {N_DRAWS} balanced draws:\n{summary.to_string()}")
+        print(f"Saved {BALANCED}")
+    return results
+
+
 if __name__ == "__main__":
-    run(load_data()[0])
+    import sys
+    songs = load_data()[0]
+    run_balanced(songs) if "--balanced" in sys.argv else run(songs)
 
 

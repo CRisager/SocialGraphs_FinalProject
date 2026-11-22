@@ -16,8 +16,14 @@ side of each train/test split, so the model cannot score by recognising an artis
 Scores are macro-F1 (1.0 = perfect; every genre counts equally, so always answering
 "rock" does not pay off).
 
+Excluded words (Jonathan's test, classification/classify_test_new.py on the jonathan
+branch): run_all(..., excluded_words=JONATHAN_EXCLUDED) repeats everything with "love",
+"baby" and "yeah" removed from both the word and the count model, to see whether the
+scores rest on a few very common words. Only in-memory copies are filtered.
+
 Usage:
     python -m src.classification
+    python -m src.classification --excluded love baby yeah   # Jonathan's test
 """
 
 import numpy as np
@@ -32,9 +38,11 @@ from sklearn.preprocessing import FunctionTransformer, StandardScaler
 from .clean import artist_main
 from .config import YEARS
 from .data import load_data
-from .text import lyrics_vectorizer, tokens_for
+from .text import lyrics_vectorizer, remove_words, tokens_for
 
 SEED = 0  # kept separate from config.SEED so scores match earlier runs
+EXCLUDED_WORDS = set()  # words left out of both models by default
+JONATHAN_EXCLUDED = {"love", "baby", "yeah"}  # the set tested in classify_test_new.py
 
 
 def count_features(texts):
@@ -61,26 +69,29 @@ def _tokens(X):
     return X["tokens"]
 
 
-def models():
+def models(excluded_words=EXCLUDED_WORDS):
     return {
         "guess": DummyClassifier(strategy="stratified", random_state=SEED),
         "counts": make_pipeline(FunctionTransformer(_raw_lyrics),
                                 FunctionTransformer(count_features), StandardScaler(),
                                 LogisticRegression(max_iter=2000, class_weight="balanced")),
-        "words": make_pipeline(FunctionTransformer(_tokens), lyrics_vectorizer(min_df=2),
+        "words": make_pipeline(FunctionTransformer(_tokens),
+                               lyrics_vectorizer(excluded_words=excluded_words, min_df=2),
                                LogisticRegression(max_iter=2000, class_weight="balanced")),
     }
 
 
-def test(name, songs, label_col, verbose=True):
+def test(name, songs, label_col, verbose=True, excluded_words=EXCLUDED_WORDS):
     """Cross-validated macro-F1 per model. Returns (scores as a pd.Series, the word
-    model's confusion matrix)."""
+    model's confusion matrix). excluded_words are removed from the raw lyrics (count
+    model) and from the tokens (word model)."""
     songs = songs.dropna(subset=["lyrics", label_col])
-    X = pd.DataFrame({"lyrics": songs.lyrics, "tokens": tokens_for(songs.lyrics, verbose)})
+    lyrics = songs.lyrics.map(lambda text: remove_words(text, excluded_words))         if excluded_words else songs.lyrics
+    X = pd.DataFrame({"lyrics": lyrics, "tokens": tokens_for(songs.lyrics, verbose)})
     y, artists = songs[label_col].to_numpy(), songs.artist.map(artist_main).to_numpy()
     folds = StratifiedGroupKFold(5, shuffle=True, random_state=SEED)
     scores = {}
-    for model_name, model in models().items():
+    for model_name, model in models(excluded_words).items():
         pred = cross_val_predict(model, X, y, groups=artists, cv=folds)
         scores[model_name] = f1_score(y, pred, average="macro")
     labels = sorted(set(y))
@@ -92,7 +103,7 @@ def test(name, songs, label_col, verbose=True):
     return pd.Series({"songs": len(y), **scores}, name=name), confusion
 
 
-def run_all(songs, genius, verbose=True):
+def run_all(songs, genius, verbose=True, excluded_words=EXCLUDED_WORDS):
     """Every label set compared in the report. Returns (macro-F1 table, confusion
     matrices of the word model: main label set, Genius songs with and without pop)."""
     matched = songs[songs.mb_label != "rap"]
@@ -107,7 +118,7 @@ def run_all(songs, genius, verbose=True):
     ]
     scores, confusions = [], {}
     for name, data, label_col in sets:
-        score, confusion = test(name, data, label_col, verbose)
+        score, confusion = test(name, data, label_col, verbose, excluded_words)
         scores.append(score)
         confusions[name] = confusion
     table = pd.DataFrame(scores).astype({"songs": int})
@@ -117,8 +128,15 @@ def run_all(songs, genius, verbose=True):
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--excluded", nargs="*", default=[], metavar="WORD",
+                    help="words to leave out of both models (Jonathan: love baby yeah)")
+    args = ap.parse_args()
     songs, genius = load_data()
-    _, confusions = run_all(songs, genius)
+    if args.excluded:
+        print(f"Excluded words: {', '.join(sorted(args.excluded))}")
+    _, confusions = run_all(songs, genius, excluded_words=set(args.excluded))
     for name, confusion in confusions.items():
         print(f"\nWord model, {name} (rows = true genre, columns = predicted)")
         print(confusion.to_string())
