@@ -64,6 +64,10 @@ def ccdf_panels(series, xlabel, name=None, ylabel="P(X ≥ x)"):
         ax.set_title(graph, loc="left")
         ax.set_xlabel(xlabel)
         ax.grid(True, which="major")
+        # a range under one decade makes matplotlib label the minor ticks too ("2x10^0"),
+        # which overlap at column width: label only powers of ten
+        for axis in (ax.xaxis, ax.yaxis):
+            axis.set_minor_formatter(mpl.ticker.NullFormatter())
     axes[0][0].set_ylabel(ylabel)
     fig.tight_layout()
     if name:

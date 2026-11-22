@@ -239,3 +239,32 @@ assert all(np.isclose(v, 1 / 3) for v in type_shares(_G3).values())
 assert all(np.isclose(d["weight"], sum(d.get(f"w_{t}", 0) for t in FEATURE_TYPES))
            for *_, d in _G3.edges(data=True))
 assert np.isclose(_G3["a"]["b"]["w_word"], 1.0) and "d" in _G3 and _G3.degree("d") == 0
+
+
+# ---------------------------------------------------------------------------------------
+# descriptive statistics (Step 3)
+# ---------------------------------------------------------------------------------------
+
+def degree_stats(G):
+    """Degree and clustering of a graph, with two random baselines for the clustering:
+    C_rand  = density, what an Erdos-Renyi graph with the same size and density gives;
+    C_conf  = (<k^2> - <k>)^2 / (<k>^3 N), the configuration model's expectation for
+              the same degree sequence (Newman 2010, eq. 13.47).
+    A clustering far above both means triangles beyond what the degrees alone explain."""
+    k = np.array([d for _, d in G.degree()], dtype=float)
+    n = len(k)
+    k1, k2 = k.mean(), (k ** 2).mean()
+    comps = list(nx.connected_components(G))
+    lcc = max(map(len, comps))
+    return {"nodes": n, "edges": G.number_of_edges(), "avg_degree": k1,
+            "median_degree": float(np.median(k)), "max_degree": int(k.max()),
+            "avg_clustering": nx.average_clustering(G),
+            "avg_clustering_weighted": nx.average_clustering(G, weight="weight"),
+            "C_rand": nx.density(G), "C_conf": (k2 - k1) ** 2 / (k1 ** 3 * n),
+            "components": len(comps), "lcc_nodes": lcc, "lcc_share": lcc / n}
+
+
+_K = nx.complete_graph(4)
+nx.set_edge_attributes(_K, 1.0, "weight")
+_d = degree_stats(_K)
+assert _d["avg_clustering"] == 1.0 and _d["C_rand"] == 1.0 and _d["avg_degree"] == 3
