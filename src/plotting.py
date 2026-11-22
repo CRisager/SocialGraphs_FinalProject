@@ -73,3 +73,22 @@ def ccdf_panels(series, xlabel, name=None, ylabel="P(X ≥ x)"):
     if name:
         savefig(fig, name)
     return fig
+
+
+def size_panels(sizes, name=None, ylabel="songs"):
+    """One bar panel per graph ({graph name: community sizes}), communities ranked by
+    size. The panels share no y-axis: the graphs have very different sizes."""
+    fig, axes = plt.subplots(1, len(sizes), figsize=(PAGE_WIDTH, 1.9), squeeze=False)
+    for ax, (graph, s) in zip(axes[0], sizes.items()):
+        s = sorted(s, reverse=True)
+        ax.bar(np.arange(len(s)), s, width=0.8, color=GRAPH_COLORS.get(graph, INK),
+               linewidth=0)
+        ax.set_title(f"{graph} ({len(s)} communities)", loc="left")
+        ax.set_xlabel("community (by size)")
+        ax.set_xticks(np.arange(len(s)), [str(i) for i in range(len(s))], fontsize=5.5)
+        ax.grid(axis="x", visible=False)
+    axes[0][0].set_ylabel(ylabel)
+    fig.tight_layout()
+    if name:
+        savefig(fig, name)
+    return fig
