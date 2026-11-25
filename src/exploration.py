@@ -16,10 +16,10 @@ import pandas as pd
 from matplotlib.ticker import PercentFormatter
 
 from .clean import SECTION_HEADER
-from .combine import genre_label
+from .combine import coarse_genre
 from .config import (BLUE, FIG_DIR, FIRST_YEAR, GENIUS_RAW, GREY, LAST_YEAR, PLOT_STYLE,
                      TAG_COLORS, YEAR_RANGE, discogs_songs, musicbrainz_checkpoint,
-                     musicbrainz_raw)
+                     musicbrainz_raw, SONGS_LYRICS)
 from .data import load_data
 from .text import tokens_for
 
@@ -99,7 +99,9 @@ def credit_coverage(year=FIRST_YEAR):
     if "instruments" not in mb:
         return None
     songs = pd.DataFrame({"id": mb.id,
-                          "genre": [genre_label(g, p) for g, p in zip(mb.genres, mb.genre)],
+                          # current labels (combine.py); duplicates merged away get none
+                          "genre": mb.id.map(pd.read_csv(SONGS_LYRICS, usecols=["id", "mb_label"])
+                                             .set_index("id").mb_label),
                           "mb instrument": has(mb.instruments)})
     if "producers" in mb:
         songs["mb producer"] = has(mb.producers)
@@ -133,6 +135,53 @@ def label_agreement(songs):
     table = pd.crosstab(songs.genius_tag[both], songs.mb_label[both])
     order = [t for t in TAGS if t in table.index or t in table.columns]
     return table.reindex(index=order, columns=order, fill_value=0)
+
+
+# MusicBrainz's own genre name for each Genius tag (the bars in overview.png)
+TAG_GENRE_NAME = {"rock": "rock", "pop": "pop", "rb": "r&b", "country": "country",
+                  "rap": "hip hop"}
+
+
+def class_members(songs, n=15):
+    """Which primary genres are combined into each coarse class (step 2 of label_steps).
+
+    One row per class: its songs, how many distinct primary genres it combines and the
+    n largest of them with their song counts. Genius tags first, then the other classes."""
+    counts = songs.genre.value_counts()
+    rows = {}
+    for cls, members in counts.groupby(counts.index.map(coarse_genre)):
+        shown = ", ".join(f"{g} ({k:,})" for g, k in members.head(n).items())
+        if len(members) > n:
+            shown += f", ... +{len(members) - n} more"
+        rows[cls] = {"songs": members.sum(), "genres": len(members), "primary genres": shown}
+    table = pd.DataFrame(rows).T
+    others = table.drop(index=TAGS, errors="ignore").sort_values("songs", ascending=False)
+    return pd.concat([table.reindex([t for t in TAGS if t in table.index]), others])
+
+
+def label_steps(songs):
+    """Songs per genre after each step from the MusicBrainz primary genre to mb_label.
+
+    1. primary genre is literally the tag's name ("r&b", not "soul"), as in overview.png
+    2. the primary genre's coarse class (soul, funk, disco -> rb; punk, wave -> rock ...)
+    3. genre_coarse: the class with most votes, summed over all of a song's genres
+    4. mb_label: as 3, but only the five Genius tags compete (jazz, folk ... drop out)
+    5. mb_label and Genius lyrics found
+    6. the analysis set of the lyrics network and classifier (rap dropped)
+    """
+    primary_class = songs.genre.map(coarse_genre, na_action="ignore")
+    lyrics = songs.lyrics.notna()
+    steps = {
+        "1. primary genre\n= tag name": songs.genre.map(
+            {name: tag for tag, name in TAG_GENRE_NAME.items()}),
+        "2. primary genre\n→ its class": primary_class,
+        "3. votes over\nall genres": songs.genre_coarse,
+        "4. mb_label\n(5 tags only)": songs.mb_label,
+        "5. with Genius\nlyrics": songs.mb_label.where(lyrics),
+        "6. in the analysis\n(no rap)": songs.mb_label.where(lyrics & (songs.mb_label != "rap")),
+    }
+    return (pd.DataFrame({step: labels.value_counts() for step, labels in steps.items()})
+            .reindex(TAGS).fillna(0).astype(int))
 
 
 def lyric_stats(songs):
@@ -227,6 +276,45 @@ def plot_overview(songs, genius, path=FIG_DIR / "overview.png"):
             axes[1, 2].text(j, i, f"{v:.0%}", ha="center", va="center", fontsize=9,
                             color="white" if v > 0.6 else "#0b0b0b")
 
+        fig.tight_layout()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(path, dpi=120)
+    return fig
+
+
+def plot_label_steps(steps, path=FIG_DIR / "label_steps.png"):
+    """One line per genre through the steps of label_steps(), every count printed."""
+    with plt.rc_context(PLOT_STYLE):
+        fig, ax = plt.subplots(figsize=(12, 6))
+        x = range(steps.shape[1])
+        for tag, counts in steps.iterrows():
+            shown = counts.replace(0, float("nan"))  # log scale: leave out empty steps
+            ax.plot(x, shown, color=TAG_COLORS[tag], lw=2, marker="o", ms=8,
+                    markeredgecolor="white", markeredgewidth=2, label=tag)
+            for i, n in enumerate(shown):
+                if n == n:  # not NaN
+                    # below the point when another genre sits just above it and the
+                    # space below is free, else above; white box keeps crossing lines off
+                    col = steps.iloc[:, i]
+                    below = (((col > n) & (col < 1.6 * n)).any()
+                             and not ((col < n) & (col > n / 1.6)).any())
+                    ax.annotate(f"{int(n):,}", (i, n), xytext=(0, -10 if below else 9),
+                                textcoords="offset points", ha="center",
+                                va="top" if below else "baseline", fontsize=9,
+                                color="#0b0b0b", bbox=dict(boxstyle="square,pad=0.1",
+                                                           fc="white", ec="none"))
+            last = shown.reset_index(drop=True).last_valid_index()  # rap ends before step 6
+            if last is not None:
+                ax.annotate(tag, (last, shown.iloc[last]), xytext=(14, 0),
+                            textcoords="offset points", va="center", fontsize=10,
+                            color="#52514e")
+        ax.set_yscale("log")
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:,.0f}"))
+        ax.set(xticks=list(x), xlim=(-0.3, len(x) - 0.4), ylabel="songs (log scale)",
+               title="Songs per genre through the labeling steps")
+        ax.set_xticklabels(steps.columns, fontsize=9)
+        ax.grid(axis="x", visible=False)
+        ax.legend(loc="lower left", ncol=len(steps), frameon=False)
         fig.tight_layout()
         path.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(path, dpi=120)

@@ -141,7 +141,7 @@ As a first look at the labels, the 16,463 songs with at least one MusicBrainz ge
 \subsection*{Three song networks}
 Songs are nodes in all three networks. Genre is never used to build an edge; it is only used afterwards, for evaluation.
 \begin{itemize}
-  \item \textbf{\Glyr} (7,682 songs). The lyrics were tokenized with spaCy \cite{TODO_spacy} ([tokenization by teammate]). Vocables and contraction fragments (``ooh'', ``yeah'', ``la'', ``gon''+``na'') were removed, which is 9.5\% of the tokens. TF-IDF vectors \cite{TODO_sklearn} were computed with sublinear term frequency ($1+\ln$ count, so that a word repeated 40 times in a chorus weighs about 4.7 instead of 40), a minimum document frequency of 2 and a maximum document frequency of 0.5, giving 12,204 words. The edge weight is the cosine similarity between two songs. The full similarity graph is 87\% complete (25,756,510 edges) and is kept as a dense matrix until the backbone is extracted.
+  \item \textbf{\Glyr} (7,682 songs). The lyrics were tokenized with spaCy \cite{TODO_spacy} ([tokenization by teammate]). Vocables and contraction fragments (``ooh'', ``yeah'', ``la'', ``gon''+``na'') were removed, which is 9.5\% of the tokens. TF-IDF vectors \cite{TODO_jurafsky_slp3} were computed with scikit-learn \cite{TODO_sklearn} with sublinear term frequency ($1+\ln$ count, so that a word repeated 40 times in a chorus weighs about 4.7 instead of 40), a minimum document frequency of 2 and a maximum document frequency of 0.5, giving 12,204 words. The edge weight is the cosine similarity between two songs. The full similarity graph is 87\% complete (25,756,510 edges) and is kept as a dense matrix until the backbone is extracted.
   \item \textbf{\Ginst} (2,171 songs). The 173 instrument names in the credits (35 of them on a single recording) were grouped into 14 families (drums, percussion, guitar, bass, keys, organ, synth, brass, saxophone, woodwind, strings, folk strings, harmonica, other), because many names describe the same role at different levels of detail (``bass'', ``bass guitar'', ``electric bass guitar''). The song--family bipartite graph was projected onto the songs with hyperbolic weighting \cite{TODO_newman2001hyperbolic}: a family shared by $k$ songs adds $1/(k-1)$ to each of their pairs. Guitar, bass and drums appear on 88\%, 86\% and 77\% of the songs and therefore add almost nothing to any pair.
   \item \textbf{\Gcomb} (1,428 songs with lyrics, instruments and country). Songs are linked through three feature types: instrument families, release country and the 10 words with the highest TF-IDF in each song. Each feature type is projected on its own with hyperbolic weighting, each projection is scaled to a total weight of 1, and the three are added, so that the three types have the same total weight. Without this balancing, the many rare words dominate: in a single projection of all features, words carried 96\% of the backbone weight.
 \end{itemize}
@@ -151,14 +151,14 @@ The three graphs are 87--95\% complete, so each was reduced to a backbone of sig
 \begin{equation}
   p_u(u,v) = \left(1 - \frac{w_{uv}}{s_u}\right)^{k_u-1},
 \end{equation}
-is the probability that $u$'s strength, spread at random over its $k_u$ edges, gives one edge a weight of at least $w_{uv}$. An edge is kept if $p < \alpha$ from either endpoint ($\alpha = 0.05$), so it is enough that the edge stands out for one of the two songs. The single edge of a degree-1 node is always kept. \Glyr{} was filtered on its full similarity matrix. The implementation matched a direct edge-by-edge evaluation of the formula on 200-song test graphs at all three $\alpha$ values used. Community detection uses the largest connected component (LCC) of each backbone. The backbones are described by their degree distribution (complementary cumulative distribution on log-log axes, without a power-law fit) and by the average clustering coefficient, compared with an Erd\H{o}s--R\'enyi graph of the same density and with the configuration-model expectation $C = (\langle k^2\rangle - \langle k\rangle)^2 / (\langle k\rangle^3 N)$.
+is the probability that $u$'s strength, spread at random over its $k_u$ edges, gives one edge a weight of at least $w_{uv}$. An edge is kept if $p < \alpha$ from either endpoint ($\alpha = 0.05$), so it is enough that the edge stands out for one of the two songs. The single edge of a degree-1 node is always kept. \Glyr{} was filtered on its full similarity matrix. The implementation matched a direct edge-by-edge evaluation of the formula on 200-song test graphs at all three $\alpha$ values used. Community detection uses the largest connected component (LCC) of each backbone. The backbones are described by their degree distribution (complementary cumulative distribution on log-log axes, without a power-law fit) and by the average clustering coefficient, compared with an Erd\H{o}s--R\'enyi graph \cite{TODO_erdos1959random} of the same density and with the configuration-model expectation $C = (\langle k^2\rangle - \langle k\rangle)^2 / (\langle k\rangle^3 N)$ \cite{TODO_newman2003structure}.
 
 \subsection*{Communities and their agreement with genre and country}
 Communities were found with Louvain \cite{TODO_blondel2008louvain} (\texttt{networkx} \cite{TODO_networkx}), which maximizes the weighted modularity
 \begin{equation}
   M = \frac{1}{2W}\sum_{ij}\left(w_{ij} - \frac{s_i s_j}{2W}\right)\delta(c_i,c_j)
 \end{equation}
-\cite{TODO_newman2004modularity}. The partitions were compared with the evaluation genre and with release country using only songs that have the label:
+\cite{TODO_newman2004modularity, TODO_newman2004weighted}. The partitions were compared with the evaluation genre and with release country using only songs that have the label:
 \begin{itemize}
   \item \textbf{Adjusted mutual information (AMI)} \cite{TODO_vinh2010ami} and \textbf{adjusted Rand index (ARI)} \cite{TODO_hubert1985ari}, which are corrected for chance, so that they are 0 for random agreement and 1 for identical partitions.
   \item \textbf{Attribute assortativity} \cite{TODO_newman2003assortativity} of the backbone edges, which measures whether links join songs with the same label more often than chance, independently of Louvain.
@@ -189,9 +189,24 @@ The lyrical themes are the \Glyr{} communities, each named by its two most disti
 
 % ---------------------------------------------------------------------
 % Placeholder citation keys used above:
-% TODO_musicbrainz, TODO_genius_kaggle, TODO_clauset2004greedy, TODO_spacy,
-% TODO_sklearn, TODO_newman2001hyperbolic, TODO_serrano2009disparity,
-% TODO_blondel2008louvain, TODO_networkx, TODO_newman2004modularity,
-% TODO_vinh2010ami, TODO_hubert1985ari, TODO_newman2003assortativity,
-% TODO_maslov2002rewiring, TODO_hutto2014vader, TODO_fortunato2007resolution
+%TODO_musicbrainz               MetaBrainz Foundation, MusicBrainz, https://musicbrainz.org [add date of the data download]
+%TODO_genius_kaggle             Genius song lyrics dataset on Kaggle [check exact title, author and URL with the teammate who downloaded it]
+%TODO_clauset2004greedy         Clauset, Newman & Moore 2004, Finding community structure in very large networks, Phys. Rev. E 70, 066111
+%TODO_spacy                     Honnibal, Montani, Van Landeghem & Boyd 2020, spaCy: Industrial-strength natural language processing in Python, Zenodo, doi:10.5281/zenodo.1212303
+%TODO_sklearn                   Pedregosa et al. 2011, Scikit-learn: Machine learning in Python, JMLR 12, 2825-2830
+%TODO_newman2001hyperbolic      Newman 2001, Scientific collaboration networks. II. Shortest paths, weighted networks, and centrality, Phys. Rev. E 64, 016132
+%TODO_serrano2009disparity      Serrano, Boguna & Vespignani 2009, Extracting the multiscale backbone of complex weighted networks, PNAS 106(16), 6483-6488
+%TODO_blondel2008louvain        Blondel, Guillaume, Lambiotte & Lefebvre 2008, Fast unfolding of communities in large networks, J. Stat. Mech. P10008
+%TODO_networkx                  Hagberg, Schult & Swart 2008, Exploring network structure, dynamics, and function using NetworkX, Proc. 7th Python in Science Conference (SciPy 2008), 11-15
+%TODO_newman2004modularity      Newman & Girvan 2004, Finding and evaluating community structure in networks, Phys. Rev. E 69, 026113  [also on the course site, week 4]
+%TODO_newman2004weighted        Newman 2004, Analysis of weighted networks, Phys. Rev. E 70, 056131  (weighted form of M)
+%TODO_jurafsky_slp3             Jurafsky & Martin, Speech and Language Processing, 3rd ed. draft, https://web.stanford.edu/~jurafsky/slp3/  (course textbook; TF-IDF and cosine similarity in Ch. 11)
+%TODO_erdos1959random           Erdos & Renyi 1959, On random graphs I, Publicationes Mathematicae Debrecen 6, 290-297
+%TODO_newman2003structure       Newman 2003, The structure and function of complex networks, SIAM Review 45(2), 167-256  (clustering of the configuration model)
+%TODO_vinh2010ami               Vinh, Epps & Bailey 2010, Information theoretic measures for clusterings comparison: Variants, properties, normalization and correction for chance, JMLR 11, 2837-2854
+%TODO_hubert1985ari             Hubert & Arabie 1985, Comparing partitions, Journal of Classification 2, 193-218
+%TODO_newman2003assortativity   Newman 2003, Mixing patterns in networks, Phys. Rev. E 67, 026126
+%TODO_maslov2002rewiring        Maslov & Sneppen 2002, Specificity and stability in topology of protein networks, Science 296(5569), 910-913
+%TODO_hutto2014vader            Hutto & Gilbert 2014, VADER: A parsimonious rule-based model for sentiment analysis of social media text, Proc. ICWSM 8(1), 216-225
+%TODO_fortunato2007resolution   Fortunato & Barthelemy 2007, Resolution limit in community detection, PNAS 104(1), 36-41
 % ---------------------------------------------------------------------
