@@ -23,11 +23,11 @@ import numpy as np
 import pandas as pd
 
 from .clean import artist_key
-from .config import REMOVE_FILLER_WORDS
+from .config import FIRST_YEAR, LAST_YEAR, REMOVE_FILLER_WORDS
 from .data import load_data
 from .text import drop_fillers, lyrics_vectorizer, tokens_for
 
-ANALYSIS_YEARS = (1970, 1975)
+ANALYSIS_YEARS = (FIRST_YEAR, LAST_YEAR)   # 1970-1980, set in src/config.py
 MIN_GENRE_SIZE = 30
 DUPLICATE_COSINE = 0.95
 

@@ -3,7 +3,7 @@
 English-language songs first released 1970–1980: MusicBrainz metadata, genres and
 credits, matched to Genius lyrics.
 
-**Research question.** To what extent can songs from 1970–1975 be grouped into
+**Research question.** To what extent can songs from 1970–1980 be grouped into
 meaningful clusters based on lyrical themes, country and instrumentation, and how do
 these clusters correspond to established musical genres?
 
@@ -36,7 +36,7 @@ src/
   data.py                load_data(): loads processed files, rebuilds them if missing
   text.py                spaCy tokenization of the lyrics (cached in data/processed/tokens.csv),
                          filler words, TF-IDF vectorizer
-  dataset.py             the 1970-1975 song table of the network analysis (genre_eval, tokens)
+  dataset.py             the 1970-1980 song table of the network analysis (genre_eval, tokens)
   graphs.py              G_lyrics, G_instruments, G_combined (TF-IDF, hyperbolic projections)
   backbone.py            disparity filter
   plotting.py            PNAS-sized figure style, PDF + PNG saving
