@@ -52,9 +52,11 @@ results/                 result tables and collection_log.jsonl (one line per cr
 
 ## Setup
 
+Python 3.12 (the analysis was run with 3.12.15).
+
 ```bash
 pip install -r requirements.txt
-python -m spacy download en_core_web_sm
+python -m spacy download en_core_web_sm-3.8.0 --direct
 ```
 
 Put the data in `data/raw/` (ask a teammate for the files, or download them, below).
