@@ -15,3 +15,6 @@ __pycache__/
 .ipynb_checkpoints/
 
 report/
+/data
+/__pycache__
+*.pyc
