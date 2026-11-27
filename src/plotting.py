@@ -382,3 +382,65 @@ def lift_heatmaps(lifts, n, name=None, min_count=5, lim=2.0, xlabels=None, colum
     if name:
         savefig(fig, name)
     return fig
+
+
+DATA_GRAY = "#a3a29c"   # neutral bars: data that is not one graph's node set
+
+
+def data_coverage(sources, coverage, name=None):
+    """How the data shrinks, as two panels of horizontal bars (one PNAS column).
+
+    sources:  {source: [(step label, count), ...]}, each list from raw to final, e.g.
+              MusicBrainz recordings and Genius pages; % is of the source's first step.
+    coverage: [(label, count, graph or None), ...] for the final song list, first row =
+              all songs; % is of that row. A row whose graph is given is that graph's
+              node set: it takes the graph's colour from GRAPH_COLORS (others are gray),
+              and a legend names the graphs.
+    Linear axes: a log axis would hide how much is lost."""
+    rows_a = sum(len(v) for v in sources.values()) + len(sources) - 1
+    fig, (ax_a, ax_b) = plt.subplots(
+        2, 1, figsize=(COL_WIDTH, 0.75 + 0.15 * (rows_a + len(coverage))),
+        layout="constrained", gridspec_kw={"height_ratios": [rows_a, len(coverage)]})
+
+    def bars(ax, items):
+        """items: (label, count, reference count, colour, y)."""
+        xmax = max(ref for _, _, ref, *_ in items)
+        for label, n, ref, color, y in items:
+            ax.barh(y, n, height=0.7, color=color, linewidth=0)
+            text = f"{n:,}" + ("" if n == ref else f" ({100 * n / ref:.0f}%)")
+            ax.text(n + 0.015 * xmax, y, text, va="center", ha="left", fontsize=6,
+                    color="#0b0b0b")
+        ys = [it[4] for it in items]
+        ax.set_yticks(ys, [it[0] for it in items], fontsize=6)
+        ax.set_ylim(max(ys) + 0.6, -0.6)
+        ax.set_xlim(0, xmax * 1.13)   # room for the end label of the longest bar
+        ax.xaxis.set_major_formatter(mpl.ticker.FuncFormatter(lambda v, _: f"{v / 1000:.0f}k"))
+        ax.grid(False)
+        ax.spines["left"].set_visible(False)
+        ax.tick_params(axis="y", length=0, pad=2)
+
+    # a: one block per source, an empty row between blocks
+    items, y = [], 0
+    for steps in sources.values():
+        for label, n in steps:
+            items.append((label, n, steps[0][1], DATA_GRAY, y))
+            y += 1
+        y += 1
+    bars(ax_a, items)
+    ax_a.set_title("a  From the two sources to one song list", loc="left")
+    ax_a.set_xlabel("recordings, pages or songs")
+
+    # b: what the final songs have
+    total = coverage[0][1]
+    items = [(lab, n, total, GRAPH_COLORS.get(g, DATA_GRAY), y)
+             for y, (lab, n, g) in enumerate(coverage)]
+    bars(ax_b, items)
+    graphs = dict.fromkeys(g for *_, g in coverage if g)   # in row order, no repeats
+    ax_b.legend(handles=[mpl.patches.Patch(color=GRAPH_COLORS[g], label=g) for g in graphs],
+                loc="lower right", frameon=False, fontsize=6, handlelength=1,
+                handleheight=0.8, labelspacing=0.3, borderaxespad=0.2)
+    ax_b.set_title(f"b  What the MusicBrainz songs contain", loc="left")
+    ax_b.set_xlabel("songs")
+    if name:
+        savefig(fig, name)
+    return fig
