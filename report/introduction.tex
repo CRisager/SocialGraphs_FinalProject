@@ -1,0 +1,35 @@
+% =====================================================================
+\section*{Introduction}
+% =====================================================================
+% All \cite keys starting with TODO_ are placeholders for the .bib file.
+
+Songs are usually sorted into genres such as rock, country or r\&b, and these labels are used by record shops, streaming services and listeners to find and describe music. A genre is not defined by a fixed set of musical properties, however. It mixes how a song sounds, which instruments are played, what the lyrics are about, where it was released and how it was marketed \cite{TODO_aucouturier2003genre, TODO_mckay2006genre}. Pachet and Cazaly compared the genre taxonomies of several music retailers and found little agreement on which genres exist or how they relate \cite{TODO_pachet2000taxonomy}. In user-tagged databases such as MusicBrainz, which is used in this project, the genre of a song is often decided by a single vote. It is therefore not obvious which of the properties behind a genre actually group songs together, and whether the groups that emerge from those properties look like the genres the songs are given.
+
+Most earlier work treats genre as a target for classification. Genre has been predicted from audio features \cite{TODO_tzanetakis2002genre} and from lyrics, using word statistics, rhyme and style features \cite{TODO_mayer2008lyrics, TODO_fell2014lyrics}. Lyrics have also been studied for their own sake: love has remained the most common theme in US Top-40 songs from 1960 to 2010 \cite{TODO_christenson2019themes}, and the share of negative emotion words in popular lyrics has increased since the 1960s \cite{TODO_brand2019emotion}. Network science offers a different view, where the groups are found from the data instead of being given in advance. Gleiser and Danon found that communities in the collaboration network of jazz musicians followed recording city and racial segregation rather than musical style \cite{TODO_gleiser2003jazz}, and Lambiotte and Ausloos found that communities in a network of listeners and artists cut across the usual genre classification \cite{TODO_lambiotte2005listening}. These networks are built from people (musicians or listeners). Less is known about networks built from the content of the songs themselves, where genre is left out when the network is built and is only used afterwards to judge the groups.
+
+This project builds such networks for English-language singles first released in 1970--1980. In this period rock, soul, funk, disco, country, reggae and punk were released side by side [reason for the period, to be confirmed by the group]. Three song networks were built, from lyrics (\Glyr), from instrument families (\Ginst), and from lyrics, instruments and release country together (\Gcomb). The lyrics are represented by TF-IDF vectors, and the instrument and country features are projected onto the songs with hyperbolic weighting \cite{TODO_newman2001hyperbolic}. Each network was reduced to its significant edges with the disparity filter of Serrano et al.\ \cite{TODO_serrano2009disparity}, and communities were found with the Louvain method \cite{TODO_blondel2008louvain}. The communities were then compared with MusicBrainz genres and release country using adjusted mutual information \cite{TODO_vinh2010ami} and tested against degree-preserving null models \cite{TODO_maslov2002rewiring}. The research question is:
+
+\begin{quote}
+\emph{To what extent can songs from 1970--1980 be grouped into meaningful clusters based on their lyrical themes, country of release and instrumentation, and how do these clusters correspond to established musical genres?}
+\end{quote}
+
+It is divided into three sub-questions:
+\begin{itemize}
+  \item \textbf{Clustering:} What groups or patterns emerge when songs are clustered based on their lyrical themes, country of release and instrumentation?
+  \item \textbf{Associations:} What relationships exist between the different variables? For example, are certain instruments more frequently associated with particular lyrical themes or countries?
+  \item \textbf{Genre comparison:} To what extent do the identified clusters align with the songs' established musical genres?
+\end{itemize}
+
+In short, all three networks contain clear community structure, but the communities match genre only weakly. Lyrics group songs by theme (AMI with genre 0.033), instrumentation comes closest to genre (AMI 0.096) through a few style-marking families such as folk strings for country, and the combined network is mainly organized by release country (AMI 0.403).
+
+% Sources: 
+%TODO_pachet2000taxonomy       Pachet & Cazaly 2000, A taxonomy of musical genres
+%TODO_aucouturier2003genre     Aucouturier & Pachet 2003, Representing musical genre: A state of the art
+%TODO_mckay2006genre           McKay & Fujinaga 2006, Musical genre classification: Is it worth pursuing…?
+%TODO_tzanetakis2002genre      Tzanetakis & Cook 2002, Musical genre classification of audio signals
+%TODO_mayer2008lyrics          Mayer, Neumayer & Rauber 2008, rhyme and style features in lyrics
+%TODO_fell2014lyrics           Fell & Sporleder 2014, lyrics-based classification
+%TODO_christenson2019themes    Christenson et al. 2019, themes in US Top-40 songs 1960–2010
+%TODO_brand2019emotion         Brand, Acerbi & Mesoudi 2019, emotion in 50 years of song lyrics
+%TODO_gleiser2003jazz          Gleiser & Danon 2003, Community structure in jazz
+%TODO_lambiotte2005listening   Lambiotte & Ausloos 2005, listening habits in bipartite networks
